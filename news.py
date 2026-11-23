@@ -4,6 +4,7 @@
 import html
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -103,6 +104,14 @@ def parse_date(s):
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def summarize(text, limit=220):
+    """The outlet's own description as plain text, cut at a word near `limit` chars."""
+    text = " ".join(re.sub(r"<[^>]+>", " ", html.unescape(text or "")).split())
+    if text.startswith("Article URL:"):  # Hacker News items have no real summary
+        return ""
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
 def parse(xml_bytes, source):
     """Items from an RSS 2.0 or Atom document."""
     out = []
@@ -123,7 +132,9 @@ def parse(xml_bytes, source):
         title, link = html.unescape(f.get("title", "")).strip(), f.get("link", "")
         when = parse_date(f.get("pubDate") or f.get("published") or f.get("updated") or f.get("date"))
         if title and link.startswith(("https://", "http://")) and when:
-            out.append({"title": title, "link": link, "source": source, "when": when})
+            summary = summarize(f.get("description") or f.get("summary") or f.get("encoded") or f.get("content"))
+            out.append({"title": title, "link": link, "source": source, "when": when,
+                        "summary": "" if summary == title else summary})
     return out
 
 
@@ -145,7 +156,9 @@ def collect(now):
         items.sort(key=lambda i: i["when"], reverse=True)
         picked = []
         for i in items:
-            if i["link"] not in taken and now - i["when"] < MAX_AGE and len(picked) < PER_SECTION:
+            # BBC's main feed mixes in sport; it belongs under Sports
+            sport_in_top = cat == "Top Stories" and "/sport/" in i["link"]
+            if i["link"] not in taken and now - i["when"] < MAX_AGE and len(picked) < PER_SECTION and not sport_in_top:
                 taken.add(i["link"])
                 picked.append(i)
         sections[cat] = picked
@@ -183,15 +196,15 @@ def render(sections, now):
     for n, (cat, items) in enumerate(sections.items()):
         lis = "".join(
             f'<li><article><h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
-            f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
+            + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
+            + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p></article></li>'
             for i in items
         )
         content = f'<ol>{lis}</ol>' if items else '<p class="empty">No recent stories in this section. Check back after the next update.</p>'
         parts.append(
             f'<section id="s{n}" aria-labelledby="heading-s{n}">'
-            f'<div class="section-heading"><h2 id="heading-s{n}">{e(cat)}</h2>'
-            f'<span>{len(items)} {"story" if len(items) == 1 else "stories"}</span></div>{content}</section>'
+            f'<h2 id="heading-s{n}">{e(cat)}</h2>{content}</section>'
         )
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     return page.replace("%UPDATED%", now.isoformat()).replace("%NAV%", nav).replace("%SECTIONS%", "".join(parts))
