@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -17,12 +18,30 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+def gnews(query):
+    """A Google News search feed; only results from TRUSTED outlets are kept."""
+    return "https://news.google.com/rss/search?" + urllib.parse.urlencode(
+        {"q": query, "hl": "en-CA", "gl": "CA", "ceid": "CA:en"})
+
+
+TRUSTED = {"CBC", "CTV News", "Global News", "The Globe and Mail", "Toronto Star", "The Canadian Press",
+           "Canadian Press", "National Post", "CityNews Toronto", "CP24", "Financial Post", "BNN Bloomberg",
+           "Maclean's", "The Logic", "Reuters", "Bloomberg.com"}
+
 # Order matters: a story in two feeds lands in the first section that has it.
 FEEDS = {
     "Top Stories": [
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-topstories"),
         ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
         ("NPR", "https://feeds.npr.org/1001/rss.xml"),
+    ],
+    "Young Canadians": [
+        ("Google News", gnews('Canada (rent OR housing OR "first-time buyers" OR mortgage OR "cost of living" '
+                              'OR groceries OR "interest rate") when:2d')),
+        ("Google News", gnews('Canada ("youth unemployment" OR "young Canadians" OR "Gen Z" OR "entry-level" '
+                              'OR "summer jobs" OR internships OR "minimum wage" OR "jobs report") when:3d')),
+        ("Google News", gnews('Canada ("student loan" OR tuition OR "international students" OR "study permit" '
+                              'OR "post-graduation work permit" OR "permanent residence" OR university) when:3d')),
     ],
     "AI": [
         ("MIT Technology Review", "https://www.technologyreview.com/topic/artificial-intelligence/feed"),
@@ -83,8 +102,10 @@ MAX_AGE = timedelta(days=2)
 RUN_AT = 7  # daily refresh and push, Toronto hour
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")  # OpenAI's cheapest tier
 FOR_YOU = 8
-READER = ("an engineering student in Waterloo, Ontario who works in robotics and follows AI, tech, "
-          "startups, Canadian and Indian politics, and major world news.")
+READER = ("a young Canadian: a university engineering student in Waterloo, Ontario who works in robotics "
+          "and follows AI, tech, startups, Canadian and Indian politics and major world news. Cares most about "
+          "what changes their life: rent and housing, jobs and internships, tuition and student loans, "
+          "immigration rules, cost of living, and their field.")
 ROOT = Path(__file__).parent
 DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 SITE = DATA / "site"
@@ -134,11 +155,14 @@ def parse(xml_bytes, source):
             elif c.text:
                 f.setdefault(name, c.text.strip())
         title, link = html.unescape(f.get("title", "")).strip(), f.get("link", "")
+        outlet = f.get("source")  # set by news searches, which name the real outlet per item
+        if outlet and title.endswith(" - " + outlet):
+            title = title[: -len(outlet) - 3]
         when = parse_date(f.get("pubDate") or f.get("published") or f.get("updated") or f.get("date"))
         if title and link.startswith(("https://", "http://")) and when:
             summary = summarize(f.get("description") or f.get("summary") or f.get("encoded") or f.get("content"))
-            out.append({"title": title, "link": link, "source": source, "when": when,
-                        "summary": "" if summary == title else summary})
+            out.append({"title": title, "link": link, "source": outlet or source, "when": when,
+                        "summary": "" if outlet or summary == title else summary})
     return out
 
 
@@ -154,7 +178,10 @@ def collect(now):
         items = []
         for source, url in feeds:
             try:
-                items += parse(fetch(url), source)
+                got = parse(fetch(url), source)
+                if source == "Google News":  # a search returns any outlet; keep the trusted ones
+                    got = [i for i in got if i["source"] in TRUSTED]
+                items += got
             except Exception as e:  # one dead feed must not stop the run
                 print(f"skip {source} {url}: {e}", file=sys.stderr)
         items.sort(key=lambda i: i["when"], reverse=True)
@@ -170,7 +197,11 @@ def collect(now):
 
 
 BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own description.
-1. For every id, write one plain, neutral sentence (at most 25 words) saying what happened.
+1. For every id write:
+   - summary: one plain, neutral sentence (at most 25 words) saying what happened.
+   - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
+     (e.g. "Could push your rent up", "Changes work permits for students like you").
+     If it barely affects them, give the general-knowledge reason in a few words.
    Use only the given text: no guessing, no opinions, no hype.
 2. Pick the {FOR_YOU} ids that matter most to this reader: {READER}
    Prefer significant news over minor items, and cover different topics."""
@@ -181,8 +212,8 @@ BRIEF_SCHEMA = {
     "required": ["stories", "picks"],
     "properties": {
         "stories": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "summary"],
-            "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}},
+            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why"],
+            "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"}},
         }},
         "picks": {"type": "array", "items": {"type": "integer"}},
     },
@@ -215,11 +246,13 @@ def ask_openai(items):
 
 
 def apply_brief(sections, brief):
-    """Swap in the AI summaries and put the picks in a 'For You' section first."""
+    """Swap in the AI summaries and reasons, and put the picks in a 'For You' section first."""
     items = [i for its in sections.values() for i in its]
     for s in brief["stories"]:
-        if 0 <= s["id"] < len(items) and s["summary"].strip():
-            items[s["id"]]["summary"] = s["summary"].strip()
+        if 0 <= s["id"] < len(items):
+            if s["summary"].strip():
+                items[s["id"]]["summary"] = s["summary"].strip()
+            items[s["id"]]["why"] = s["why"].strip()
     picks = [items[n] for n in dict.fromkeys(brief["picks"]) if 0 <= n < len(items)][:FOR_YOU]
     return {"For You": picks, **sections} if picks else sections
 
@@ -257,8 +290,11 @@ def render(sections, now):
     parts = []
     for n, (cat, items) in enumerate(sections.items()):
         lis = "".join(
-            f'<li><article><h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
+            '<li><article>'
+            + (f'<p class="tag">{e(i["section"])}</p>' if cat == "For You" and i.get("section") else "")
+            + f'<h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
             + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
+            + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p></article></li>'
             for i in items

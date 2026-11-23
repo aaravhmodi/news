@@ -4,19 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<meta name="theme-color" content="#faf8f3">
+<meta name="theme-color" content="#f3f3f1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="The Brief">
 <title>The Brief</title>
 <style>
-  :root { color-scheme: light; --paper: #ffffff; --ink: #1c1c1c; --muted: #5f5f5f; --rule: #e4e4e4; --accent: #b3261e; }
+  :root { color-scheme: light; --paper: #f3f3f1; --tile: #ffffff; --ink: #1c1c1c; --muted: #5f5f5f; --rule: #e4e4e4; --accent: #b3261e; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   a { color: inherit; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .skip { position: absolute; left: 1rem; top: -6rem; padding: .75rem; background: var(--paper); z-index: 3; }
   .skip:focus { top: .5rem; }
-  .masthead, .topics, main, footer { max-width: 42rem; margin-inline: auto; }
+  .masthead, .topics, main, footer { max-width: 60rem; margin-inline: auto; }
   .masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1.25rem 1.25rem .75rem; }
   h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
   .updated { margin: 0; color: var(--muted); font-size: .85rem; }
@@ -30,20 +30,27 @@
   section { scroll-margin-top: 4rem; padding-top: 1.25rem; }
   [hidden] { display: none !important; }
   h2 { margin: 0 0 .25rem; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  ol { list-style: none; margin: 0; padding: 0; }
-  li { padding: 1rem 0; border-bottom: 1px solid var(--rule); }
+  ol { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .75rem; }
+  li { position: relative; padding: 1rem 1.1rem; background: var(--tile); border: 1px solid var(--rule); border-radius: 10px; }
+  .tag { margin: 0 0 .3rem; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   h3 { margin: 0; font-size: 1.1rem; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
   h3 a { text-decoration: none; }
   h3 a::after { content: ""; position: absolute; inset: 0; }  /* whole story is the tap target */
-  li { position: relative; }
-  li:has(h3 a:visited) h3 { color: var(--muted); }
+  h3 a:visited { color: var(--muted); }
   .summary { margin: .35rem 0 0; color: #3a3a3a; font-size: .95rem; }
-  .story-meta { margin: .4rem 0 0; color: var(--muted); font-size: .8rem; }
+  .why { margin: .6rem 0 0; padding: .45rem .6rem; background: #fbf1ef; border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; font-size: .88rem; }
+  .why b { font-weight: 700; }
+  .story-meta { margin: .55rem 0 0; color: var(--muted); font-size: .8rem; }
   .story-meta span { padding-inline: .3rem; }
   .empty { padding-block: 1.5rem; color: var(--muted); }
   footer { padding: 2rem 1.25rem max(2rem, env(safe-area-inset-bottom)); color: var(--muted); font-size: .8rem; }
-  @media (hover: hover) { li:hover h3 { text-decoration: underline; text-underline-offset: .15em; } .topics a:hover { color: var(--ink); } }
-  @media (min-width: 640px) { .topics { flex-wrap: wrap; } }
+  @media (hover: hover) { li:hover { border-color: #c9c9c5; } li:hover h3 { text-decoration: underline; text-underline-offset: .15em; } .topics a:hover { color: var(--ink); } }
+  @media (min-width: 700px) {
+    .topics { flex-wrap: wrap; }
+    ol { grid-template-columns: 1fr 1fr; }
+    li:first-child { grid-column: 1 / -1; }
+    li:first-child h3 { font-size: 1.35rem; }
+  }
 </style>
 </head>
 <body>

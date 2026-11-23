@@ -27,13 +27,26 @@ class T(unittest.TestCase):
         self.assertIn("Model &lt;b&gt;x&lt;/b&gt;", page)
         self.assertNotIn("%SECTIONS%", page)
 
+    def test_news_search_item(self):
+        xml = b"""<rss><channel><item><title>Rents fall - CBC</title><link>https://news.google.com/a</link>
+<pubDate>Mon, 23 Nov 2026 14:00:00 GMT</pubDate><description>&lt;a&gt;Rents fall&lt;/a&gt; CBC</description>
+<source url="https://www.cbc.ca">CBC</source></item></channel></rss>"""
+        [i] = parse(xml, "Google News")
+        self.assertEqual((i["title"], i["source"], i["summary"]), ("Rents fall", "CBC", ""))
+
     def test_apply_brief(self):
-        a, b = {"title": "A", "summary": "feed a"}, {"title": "B", "summary": "feed b"}
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        a, b = ({"title": t, "summary": f"feed {t}", "link": "https://x/" + t, "source": "CBC", "when": now,
+                 "section": s} for t, s in (("a", "World"), ("b", "Tech")))
         out = apply_brief({"World": [a], "Tech": [b]},
-                          {"stories": [{"id": 1, "summary": " AI b "}, {"id": 9, "summary": "x"}], "picks": [1, 1, 7]})
+                          {"stories": [{"id": 1, "summary": " AI b ", "why": "rent"}, {"id": 9, "summary": "x", "why": "y"}],
+                           "picks": [1, 1, 7]})
         self.assertEqual(list(out), ["For You", "World", "Tech"])  # bad ids and repeats ignored
         self.assertEqual(out["For You"], [b])
-        self.assertEqual((a["summary"], b["summary"]), ("feed a", "AI b"))
+        self.assertEqual((a["summary"], b["summary"], b["why"]), ("feed a", "AI b", "rent"))
+        page = render(out, now)
+        self.assertIn("Why it matters to you:</b> rent", page)
+        self.assertIn('<p class="tag">Tech</p>', page)  # For You tiles name their topic
         self.assertEqual(list(apply_brief({"World": [a]}, {"stories": [], "picks": []})), ["World"])
 
 
