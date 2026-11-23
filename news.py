@@ -191,8 +191,9 @@ STOP = {"says", "said", "after", "over", "with", "from", "into", "about", "will"
 
 
 def words(title):
-    """Content words of a headline, in order."""
-    return [w for w in re.findall(r"[a-z0-9']+", title.lower()) if len(w) > 3 and w not in STOP]
+    """Content words of a headline, in order, with a plain plural "s" dropped (collapses ~ collapse)."""
+    ws = [w.removesuffix("'s") for w in re.findall(r"[a-z0-9']+", title.lower())]
+    return [w[:-1] if w.endswith("s") and len(w) > 4 else w for w in ws if len(w) > 3 and w not in STOP]
 
 
 def same_story(a, b):

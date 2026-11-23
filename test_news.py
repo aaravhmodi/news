@@ -59,7 +59,10 @@ class T(unittest.TestCase):
                 mk("Carney unveils tariffs on American steel imports", "CTV News"),
                 mk("Steel tariffs: Carney hits back at US imports", "CBC")]
         other = mk("Ice storm closes schools in Ottawa", "Global News")
-        add_coverage(same + [other])
+        cop = [mk("Cop31 collapses: why did climate talks fall apart?", "BBC"),
+               mk("Why did COP31 climate talks collapse without a deal?", "NPR")]
+        add_coverage(same + [other] + cop)
+        self.assertEqual(cop[0]["outlets"], 2)  # plural folded: collapses ~ collapse
         self.assertEqual([i["outlets"] for i in same + [other]], [2, 2, 2, 1])  # two outlets, one story
         score(same[0], now), score(other, now)
         self.assertEqual(same[0]["you_score"], 2)  # watchlist: Carney, tariffs
