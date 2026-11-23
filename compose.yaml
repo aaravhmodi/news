@@ -1,0 +1,14 @@
+# The news brief. The page is published only on the server's Tailscale address.
+services:
+  news:
+    build: .
+    restart: unless-stopped
+    user: "1000:1000"
+    # Same NTFY_TOPIC as every other push from this server, so no .env of its own.
+    env_file: ../../homelab/alerts/.env
+    environment:
+      SITE_URL: http://100.76.57.23:8097/
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "100.76.57.23:8097:8097"

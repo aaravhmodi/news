@@ -1,55 +1,89 @@
-"""Pull credible RSS feeds, push a digest to ntfy, write docs/index.html."""
+"""Pull credible RSS feeds, push a digest to ntfy, write data/site/index.html.
+
+`python news.py` runs once (prints the digest without NTFY_TOPIC); `--serve` is the server mode."""
 import html
 import json
 import os
 import sys
+import threading
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # Order matters: a story in two feeds lands in the first section that has it.
 FEEDS = {
+    "Top Stories": [
+        ("CBC", "https://www.cbc.ca/webfeed/rss/rss-topstories"),
+        ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
+        ("NPR", "https://feeds.npr.org/1001/rss.xml"),
+    ],
     "AI": [
         ("MIT Technology Review", "https://www.technologyreview.com/topic/artificial-intelligence/feed"),
         ("The Verge", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"),
         ("TechCrunch", "https://techcrunch.com/category/artificial-intelligence/feed/"),
+        ("Ars Technica", "https://arstechnica.com/ai/feed/"),
     ],
     "Tech": [
         ("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index"),
         ("The Verge", "https://www.theverge.com/rss/index.xml"),
+        ("Wired", "https://www.wired.com/feed/rss"),
+        ("TechCrunch", "https://techcrunch.com/feed/"),
         ("IEEE Spectrum", "https://spectrum.ieee.org/feeds/topic/robotics.rss"),
+        ("Hacker News", "https://hnrss.org/frontpage?points=200"),
     ],
     "Canada": [
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-politics"),
         ("Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/politics/"),
+        ("Global News", "https://globalnews.ca/politics/feed/"),
+        ("CBC", "https://www.cbc.ca/webfeed/rss/rss-canada"),
+    ],
+    "Ontario & Waterloo": [
+        ("CBC Kitchener-Waterloo", "https://www.cbc.ca/webfeed/rss/rss-canada-kitchenerwaterloo"),
+        ("CBC Toronto", "https://www.cbc.ca/webfeed/rss/rss-canada-toronto"),
     ],
     "India": [
         ("The Hindu", "https://www.thehindu.com/news/national/feeder/default.rss"),
         ("Indian Express", "https://indianexpress.com/section/india/feed/"),
+        ("BBC", "https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"),
+    ],
+    "US Politics": [
+        ("NPR", "https://feeds.npr.org/1014/rss.xml"),
+        ("Politico", "https://rss.politico.com/politics-news.xml"),
     ],
     "World": [
         ("BBC", "https://feeds.bbci.co.uk/news/world/rss.xml"),
         ("NPR", "https://feeds.npr.org/1004/rss.xml"),
         ("The Guardian", "https://www.theguardian.com/world/rss"),
+        ("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"),
     ],
     "Business": [
         ("BBC", "https://feeds.bbci.co.uk/news/business/rss.xml"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-business"),
+        ("NPR", "https://feeds.npr.org/1006/rss.xml"),
     ],
     "Science & Health": [
         ("BBC", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
         ("NPR", "https://feeds.npr.org/1007/rss.xml"),
+        ("NPR", "https://feeds.npr.org/1128/rss.xml"),
     ],
-    "Waterloo Region": [
-        ("CBC Kitchener-Waterloo", "https://www.cbc.ca/webfeed/rss/rss-canada-kitchenerwaterloo"),
+    "Sports": [
+        ("CBC", "https://www.cbc.ca/webfeed/rss/rss-sports"),
+        ("BBC", "https://feeds.bbci.co.uk/sport/rss.xml"),
     ],
 }
-PER_SECTION = 8
+PER_SECTION = 10
 MAX_AGE = timedelta(days=2)
+EVERY = timedelta(hours=2)
 ROOT = Path(__file__).parent
-SEEN = ROOT / "seen.json"
+DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
+SITE = DATA / "site"
+SEEN = DATA / "seen.json"
 
 
 def local(tag):
@@ -156,18 +190,36 @@ def render(sections, now):
     return page.replace("%UPDATED%", now.isoformat()).replace("%NAV%", nav).replace("%SECTIONS%", "".join(parts))
 
 
-def main():
+def run(push=True):
     now = datetime.now(timezone.utc)
     seen = json.loads(SEEN.read_text()) if SEEN.exists() else {}
     sections = collect(now)
-    for link in notify(sections, seen, now):
-        seen[link] = now.isoformat()
+    if push:
+        try:
+            for link in notify(sections, seen, now):
+                seen[link] = now.isoformat()
+        except OSError as e:  # unsent stories stay unseen, so the next run pushes them
+            print(f"push failed: {e}", file=sys.stderr)
     seen = {k: v for k, v in seen.items() if now - datetime.fromisoformat(v) < timedelta(days=7)}
+    SITE.mkdir(parents=True, exist_ok=True)
     SEEN.write_text(json.dumps(seen, indent=0))
-    (ROOT / "docs").mkdir(exist_ok=True)
-    (ROOT / "docs" / "index.html").write_text(render(sections, now), encoding="utf-8")
-    print({c: len(i) for c, i in sections.items()})
+    (SITE / "index.html").write_text(render(sections, now), encoding="utf-8")
+    print(now.isoformat(), {c: len(i) for c, i in sections.items()}, flush=True)
+
+
+def serve(port=8097):
+    """Serve the page and refresh it every EVERY; no pushes overnight (they wait for 7am)."""
+    SITE.mkdir(parents=True, exist_ok=True)
+    handler = partial(SimpleHTTPRequestHandler, directory=SITE)
+    threading.Thread(target=ThreadingHTTPServer(("", port), handler).serve_forever, daemon=True).start()
+    toronto = ZoneInfo("America/Toronto")
+    while True:
+        try:
+            run(push=7 <= datetime.now(toronto).hour < 23)
+        except Exception as e:  # keep serving; try again next cycle
+            print(f"run failed: {e}", file=sys.stderr, flush=True)
+        time.sleep(EVERY.total_seconds())
 
 
 if __name__ == "__main__":
-    main()
+    serve() if "--serve" in sys.argv else run()
