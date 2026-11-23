@@ -1,0 +1,23 @@
+name: news
+on:
+  # UTC; roughly 7am, 10am, 1pm, 4pm, 7pm, 10pm Toronto time
+  schedule: [{ cron: "0 0,3,12,15,18,21 * * *" }]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: news
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest test_news
+      - run: python3 news.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SITE_URL: https://aaravhmodi.github.io/news/
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs seen.json
+          git diff --cached --quiet || { git commit -m "update brief" && git push; }
