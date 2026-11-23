@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from news import parse, render
+from news import apply_brief, parse, render
 
 RSS = b"""<rss><channel><item><title>Budget &amp;amp; vote</title><link>https://cbc.ca/a</link>
 <pubDate>Mon, 23 Nov 2026 14:00:00 GMT</pubDate>
@@ -26,6 +26,15 @@ class T(unittest.TestCase):
         page = render({"AI": [i]}, i["when"])
         self.assertIn("Model &lt;b&gt;x&lt;/b&gt;", page)
         self.assertNotIn("%SECTIONS%", page)
+
+    def test_apply_brief(self):
+        a, b = {"title": "A", "summary": "feed a"}, {"title": "B", "summary": "feed b"}
+        out = apply_brief({"World": [a], "Tech": [b]},
+                          {"stories": [{"id": 1, "summary": " AI b "}, {"id": 9, "summary": "x"}], "picks": [1, 1, 7]})
+        self.assertEqual(list(out), ["For You", "World", "Tech"])  # bad ids and repeats ignored
+        self.assertEqual(out["For You"], [b])
+        self.assertEqual((a["summary"], b["summary"]), ("feed a", "AI b"))
+        self.assertEqual(list(apply_brief({"World": [a]}, {"stories": [], "picks": []})), ["World"])
 
 
 if __name__ == "__main__":

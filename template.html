@@ -64,7 +64,7 @@
     const tabs = Array.from(tablist.querySelectorAll('a'));
     const panels = tabs.map(tab => document.getElementById(tab.hash.slice(1)));
     if (!tabs.length || panels.some(panel => !panel)) return;
-    const defaultIndex = Math.max(0, tabs.findIndex(tab => tab.textContent === 'Top Stories'));
+    const defaultIndex = 0;  // For You when the AI brief ran, else Top Stories
     let activeIndex = defaultIndex;
     tablist.setAttribute('role', 'tablist');
     tablist.setAttribute('aria-label', 'News topics');

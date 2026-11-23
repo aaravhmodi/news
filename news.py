@@ -80,7 +80,11 @@ FEEDS = {
 }
 PER_SECTION = 10
 MAX_AGE = timedelta(days=2)
-EVERY = timedelta(hours=2)
+RUN_AT = 7  # daily refresh and push, Toronto hour
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")  # OpenAI's cheapest tier
+FOR_YOU = 8
+READER = ("an engineering student in Waterloo, Ontario who works in robotics and follows AI, tech, "
+          "startups, Canadian and Indian politics, and major world news.")
 ROOT = Path(__file__).parent
 DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 SITE = DATA / "site"
@@ -165,13 +169,71 @@ def collect(now):
     return sections
 
 
+BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own description.
+1. For every id, write one plain, neutral sentence (at most 25 words) saying what happened.
+   Use only the given text: no guessing, no opinions, no hype.
+2. Pick the {FOR_YOU} ids that matter most to this reader: {READER}
+   Prefer significant news over minor items, and cover different topics."""
+
+BRIEF_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["stories", "picks"],
+    "properties": {
+        "stories": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["id", "summary"],
+            "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}},
+        }},
+        "picks": {"type": "array", "items": {"type": "integer"}},
+    },
+}
+
+
+def ask_openai(items):
+    """One cheap call for the whole day's stories. Returns the parsed JSON brief."""
+    lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:160]}' for n, i in enumerate(items))
+    body = {
+        "model": MODEL,
+        "reasoning": {"effort": "none"},
+        "max_output_tokens": 12000,
+        "instructions": BRIEF_PROMPT,
+        "input": lines,
+        "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},
+    }
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=180) as r:
+        data = json.load(r)
+    print("openai usage:", data.get("usage", {}).get("input_tokens"), "in,",
+          data.get("usage", {}).get("output_tokens"), "out", flush=True)
+    text = next(c["text"] for o in data["output"] if o["type"] == "message"
+                for c in o["content"] if c["type"] == "output_text")
+    return json.loads(text)
+
+
+def apply_brief(sections, brief):
+    """Swap in the AI summaries and put the picks in a 'For You' section first."""
+    items = [i for its in sections.values() for i in its]
+    for s in brief["stories"]:
+        if 0 <= s["id"] < len(items) and s["summary"].strip():
+            items[s["id"]]["summary"] = s["summary"].strip()
+    picks = [items[n] for n in dict.fromkeys(brief["picks"]) if 0 <= n < len(items)][:FOR_YOU]
+    return {"For You": picks, **sections} if picks else sections
+
+
 def notify(sections, seen, now):
-    """Push one digest: the newest unseen story from each section. Returns links to mark seen."""
+    """Push one digest and return the links to mark seen: the For You picks, else the newest story per section."""
     new = {cat: [i for i in items if i["link"] not in seen] for cat, items in sections.items()}
-    count = sum(map(len, new.values()))
+    count = len({i["link"] for items in new.values() for i in items})
     if not count:
         return []
-    body = "\n".join(f"{cat}: {items[0]['title']}" for cat, items in new.items() if items)
+    if sections.get("For You"):
+        body = "\n".join(f"• {i['title']}" for i in sections["For You"])
+    else:
+        body = "\n".join(f"{cat}: {items[0]['title']}" for cat, items in new.items() if items)
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
         req = urllib.request.Request(
@@ -214,6 +276,16 @@ def run(push=True):
     now = datetime.now(timezone.utc)
     seen = json.loads(SEEN.read_text()) if SEEN.exists() else {}
     sections = collect(now)
+    if not any(sections.values()):  # offline: keep yesterday's page and retry later
+        raise RuntimeError("no feed could be read")
+    if os.environ.get("OPENAI_API_KEY"):
+        for cat, items in sections.items():
+            for i in items:
+                i["section"] = cat
+        try:
+            sections = apply_brief(sections, ask_openai([i for its in sections.values() for i in its]))
+        except Exception as e:  # the feeds' own summaries are a fine fallback
+            print(f"openai failed, using feed summaries: {e}", file=sys.stderr, flush=True)
     if push:
         try:
             for link in notify(sections, seen, now):
@@ -228,17 +300,23 @@ def run(push=True):
 
 
 def serve(port=8097):
-    """Serve the page and refresh it every EVERY; no pushes overnight (they wait for 7am)."""
+    """Serve the page; rebuild it and push once a day at RUN_AT Toronto time."""
     SITE.mkdir(parents=True, exist_ok=True)
     handler = partial(SimpleHTTPRequestHandler, directory=SITE)
     threading.Thread(target=ThreadingHTTPServer(("", port), handler).serve_forever, daemon=True).start()
-    toronto = ZoneInfo("America/Toronto")
+    toronto, page = ZoneInfo("America/Toronto"), SITE / "index.html"
     while True:
-        try:
-            run(push=7 <= datetime.now(toronto).hour < 23)
-        except Exception as e:  # keep serving; try again next cycle
-            print(f"run failed: {e}", file=sys.stderr, flush=True)
-        time.sleep(EVERY.total_seconds())
+        now = datetime.now(toronto)
+        due = now.replace(hour=RUN_AT, minute=0, second=0, microsecond=0)
+        if due > now:
+            due -= timedelta(days=1)
+        # a restart (deploy, reboot) doesn't re-run a day that is already done
+        if not page.exists() or datetime.fromtimestamp(page.stat().st_mtime, toronto) < due:
+            try:
+                run()
+            except Exception as e:  # keep serving; retried on the next check
+                print(f"run failed: {e}", file=sys.stderr, flush=True)
+        time.sleep(15 * 60)
 
 
 if __name__ == "__main__":
