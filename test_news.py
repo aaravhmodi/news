@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from news import apply_brief, parse, render
+from news import add_coverage, apply_brief, parse, rank, render, score
 
 RSS = b"""<rss><channel><item><title>Budget &amp;amp; vote</title><link>https://cbc.ca/a</link>
 <pubDate>Mon, 23 Nov 2026 14:00:00 GMT</pubDate>
@@ -34,20 +34,36 @@ class T(unittest.TestCase):
         [i] = parse(xml, "Google News")
         self.assertEqual((i["title"], i["source"], i["summary"]), ("Rents fall", "CBC", ""))
 
-    def test_apply_brief(self):
+    def test_brief_scores_and_for_you(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
         a, b = ({"title": t, "summary": f"feed {t}", "link": "https://x/" + t, "source": "CBC", "when": now,
-                 "section": s} for t, s in (("a", "World"), ("b", "Tech")))
-        out = apply_brief({"World": [a], "Tech": [b]},
-                          {"stories": [{"id": 1, "summary": " AI b ", "why": "rent"}, {"id": 9, "summary": "x", "why": "y"}],
-                           "picks": [1, 1, 7]})
-        self.assertEqual(list(out), ["For You", "World", "Tech"])  # bad ids and repeats ignored
-        self.assertEqual(out["For You"], [b])
-        self.assertEqual((a["summary"], b["summary"], b["why"]), ("feed a", "AI b", "rent"))
+                 "section": s, "outlets": 1} for t, s in (("a", "World"), ("b", "Tech")))
+        sections = {"World": [a], "Tech": [b]}
+        apply_brief(sections, {"stories": [
+            {"id": 1, "summary": " AI b ", "why": "rent", "world": 12, "you": 9},  # 12 clamps to 10
+            {"id": 0, "summary": "", "why": "", "world": 2, "you": 1},
+            {"id": 9, "summary": "x", "why": "y", "world": 5, "you": 5}]})  # unknown id ignored
+        self.assertEqual((a["summary"], b["summary"], b["why"], b["world"]), ("feed a", "AI b", "rent", 10))
+        out = rank(sections, now)
+        self.assertEqual(list(out), ["For You", "World", "Tech"])
+        self.assertEqual(out["For You"][0], b)  # the higher-scoring story leads
         page = render(out, now)
         self.assertIn("Why it matters to you:</b> rent", page)
         self.assertIn('<p class="tag">Tech</p>', page)  # For You tiles name their topic
-        self.assertEqual(list(apply_brief({"World": [a]}, {"stories": [], "picks": []})), ["World"])
+        self.assertIn("World 8/10", page)  # 0.75 * 10 + 0.25 * 0 coverage
+
+    def test_coverage_and_watchlist(self):
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        mk = lambda t, src: {"title": t, "summary": "", "source": src, "when": now}
+        same = [mk("Carney announces new tariffs on US steel imports", "CBC"),
+                mk("Carney unveils tariffs on American steel imports", "CTV News"),
+                mk("Steel tariffs: Carney hits back at US imports", "CBC")]
+        other = mk("Ice storm closes schools in Ottawa", "Global News")
+        add_coverage(same + [other])
+        self.assertEqual([i["outlets"] for i in same + [other]], [2, 2, 2, 1])  # two outlets, one story
+        score(same[0], now), score(other, now)
+        self.assertEqual(same[0]["you_score"], 2)  # watchlist: Carney, tariffs
+        self.assertEqual(other["you_score"], 0)  # "Ice storm" is not ICE
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 `python news.py` runs once (prints the digest without NTFY_TOPIC); `--serve` is the server mode."""
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -41,7 +42,7 @@ FEEDS = {
         ("Google News", gnews('Canada ("youth unemployment" OR "young Canadians" OR "Gen Z" OR "entry-level" '
                               'OR "summer jobs" OR internships OR "minimum wage" OR "jobs report") when:3d')),
         ("Google News", gnews('Canada ("student loan" OR tuition OR "international students" OR "study permit" '
-                              'OR "post-graduation work permit" OR "permanent residence" OR university) when:3d')),
+                              'OR OSAP OR "post-graduation work permit" OR "permanent residence" OR university) when:3d')),
     ],
     "AI": [
         ("MIT Technology Review", "https://www.technologyreview.com/topic/artificial-intelligence/feed"),
@@ -58,8 +59,9 @@ FEEDS = {
         ("Hacker News", "https://hnrss.org/frontpage?points=200"),
     ],
     "Canada": [
+        ("Google News", gnews('Canada (tariffs OR CUSMA OR USMCA OR ICE OR "border" OR Trump OR Carney) when:2d')),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-politics"),
-        ("Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/politics/"),
+        ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/politics/"),
         ("Global News", "https://globalnews.ca/politics/feed/"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-canada"),
     ],
@@ -172,8 +174,72 @@ def fetch(url):
         return r.read()
 
 
+# --- Importance scoring ---------------------------------------------------------------
+# A blend of what news rankers use. Coverage: how many separate outlets in today's scrape
+# carry the story (cluster size is the main importance signal in the research). World: an
+# AI 0-10 significance rating on an anchored scale (scale, magnitude, potential, novelty,
+# as News Minimalist does). You: an AI 0-10 "affects your life" rating plus a watchlist
+# boost. Freshness: a gentle decay so a 2-day-old story needs to be bigger to rank.
+WATCH = re.compile(r"(?-i:\bICE\b)|\b(tariffs?|CUSMA|USMCA|Carney|OSAP|Ontario|Waterloo|study permits?|"
+                   r"work permits?|PGWP|immigration|rent|Bank of Canada|interest rates?|minimum wage|"
+                   r"student loans?|tuition|housing|layoffs?|internships?)\b", re.I)
+# Words too generic to tell two stories apart (they appear in many unrelated headlines).
+STOP = {"says", "said", "after", "over", "with", "from", "into", "about", "will", "what", "this", "that",
+        "their", "they", "have", "more", "than", "amid", "could", "would", "news", "when", "where", "trump",
+        "white", "house", "canada", "canadian", "canadians", "government", "federal", "minister", "president",
+        "world", "year", "first", "back", "next", "talks", "deal", "police", "court", "2026", "people", "report"}
+
+
+def words(title):
+    """Content words of a headline, in order."""
+    return [w for w in re.findall(r"[a-z0-9']+", title.lower()) if len(w) > 3 and w not in STOP]
+
+
+def same_story(a, b):
+    """Two headlines (word lists) report the same story: 3+ shared words, or 2 that overlap
+    strongly or form the same two-word name/phrase (e.g. "jensen huang", "press gallery")."""
+    sa, sb = set(a), set(b)
+    shared = len(sa & sb)
+    if shared >= 3:
+        return True
+    pairs = set(zip(a, a[1:])) & set(zip(b, b[1:]))
+    return shared == 2 and (shared / len(sa | sb) >= 0.3 or bool(pairs))
+
+
+def add_coverage(items):
+    """i["outlets"]: how many different outlets carry the same story. Direct matches only, so
+    one generic word can't chain unrelated stories together."""
+    for i in items:
+        i["words"] = words(i["title"])
+    for a in items:
+        a["outlets"] = len({b["source"] for b in items if same_story(a["words"], b["words"])})
+
+
+def score(i, now):
+    """0-10 importance used for ranking. Sets i["world_score"] and i["you_score"] for display."""
+    coverage = min(10.0, 3.3 * math.log2(i["outlets"]))  # 1 outlet 0, 2 -> 3.3, 4 -> 6.6, 8+ -> 10
+    world = 0.75 * i["world"] + 0.25 * coverage if "world" in i else coverage
+    you = min(10, i.get("you", 0) + (2 if WATCH.search(f'{i["title"]} {i["summary"]}') else 0))
+    fresh = 0.5 ** ((now - i["when"]).total_seconds() / 3600 / 36)  # halves every 36h
+    i["world_score"], i["you_score"] = round(world), round(you)
+    return (0.5 * world + 0.5 * you) * (0.6 + 0.4 * fresh)
+
+
+def rank(sections, now, per_topic=3):
+    """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'."""
+    for items in sections.values():
+        items.sort(key=lambda i: score(i, now), reverse=True)
+    pool = sorted((i for items in sections.values() for i in items), key=lambda i: score(i, now), reverse=True)
+    picks, per = [], {}
+    for i in pool:
+        if len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic and i["section"] != "Sports":
+            picks.append(i)
+            per[i["section"]] = per.get(i["section"], 0) + 1
+    return {"For You": picks, **sections}
+
+
 def collect(now):
-    sections, taken = {}, set()
+    raw = {}
     for cat, feeds in FEEDS.items():
         items = []
         for source, url in feeds:
@@ -184,14 +250,18 @@ def collect(now):
                 items += got
             except Exception as e:  # one dead feed must not stop the run
                 print(f"skip {source} {url}: {e}", file=sys.stderr)
-        items.sort(key=lambda i: i["when"], reverse=True)
+        raw[cat] = [i for i in items if now - i["when"] < MAX_AGE]
+    add_coverage([i for items in raw.values() for i in items])
+    sections, shown = {}, []
+    for cat, items in raw.items():  # each section's PER_SECTION most important stories, one tile per story
+        items.sort(key=lambda i: score(i, now), reverse=True)
         picked = []
         for i in items:
             # BBC's main feed mixes in sport; it belongs under Sports
             sport_in_top = cat == "Top Stories" and "/sport/" in i["link"]
-            if i["link"] not in taken and now - i["when"] < MAX_AGE and len(picked) < PER_SECTION and not sport_in_top:
-                taken.add(i["link"])
-                picked.append(i)
+            if len(picked) < PER_SECTION and not sport_in_top and not any(same_story(i["words"], w) for w in shown):
+                shown.append(i["words"])
+                picked.append(dict(i, section=cat))
         sections[cat] = picked
     return sections
 
@@ -202,20 +272,28 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
      (e.g. "Could push your rent up", "Changes work permits for students like you").
      If it barely affects them, give the general-knowledge reason in a few words.
-   Use only the given text: no guessing, no opinions, no hype.
-2. Pick the {FOR_YOU} ids that matter most to this reader: {READER}
-   Prefer significant news over minor items, and cover different topics."""
+   - world (0-10): how significant this is for the world and for general knowledge, judged on
+     scale (how many people), magnitude (how strongly), potential (lasting consequences) and novelty.
+     0-2 celebrity, sports results, minor local news; 3-4 notable national news; 5-6 major national
+     policy or a big industry shift; 7-8 major international event affecting millions; 9-10 historic.
+   - you (0-10): how directly it affects this reader's life, money, career or rights.
+     9-10 directly changes their costs, loans, status or job market (OSAP, study/work permits,
+     Ontario rent, Bank of Canada rates); 6-8 Canadian federal politics (what Carney's government
+     does), US actions that hit Canada (tariffs, trade, ICE, the border), big moves in AI or robotics;
+     3-5 general knowledge they should know; 0-2 does not touch them.
+   Use only the given text: no guessing, no opinions, no hype. Be strict: most stories are 2-5.
+The reader: {READER}"""
 
 BRIEF_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["stories", "picks"],
+    "required": ["stories"],
     "properties": {
         "stories": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why"],
-            "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"}},
+            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "world", "you"],
+            "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
+                           "world": {"type": "integer"}, "you": {"type": "integer"}},
         }},
-        "picks": {"type": "array", "items": {"type": "integer"}},
     },
 }
 
@@ -246,15 +324,15 @@ def ask_openai(items):
 
 
 def apply_brief(sections, brief):
-    """Swap in the AI summaries and reasons, and put the picks in a 'For You' section first."""
+    """Copy the AI summary, reason and 0-10 ratings onto each story (ids are positions in sections)."""
     items = [i for its in sections.values() for i in its]
     for s in brief["stories"]:
         if 0 <= s["id"] < len(items):
+            i = items[s["id"]]
             if s["summary"].strip():
-                items[s["id"]]["summary"] = s["summary"].strip()
-            items[s["id"]]["why"] = s["why"].strip()
-    picks = [items[n] for n in dict.fromkeys(brief["picks"]) if 0 <= n < len(items)][:FOR_YOU]
-    return {"For You": picks, **sections} if picks else sections
+                i["summary"] = s["summary"].strip()
+            i["why"] = s["why"].strip()
+            i["world"], i["you"] = (max(0, min(10, s[k])) for k in ("world", "you"))
 
 
 def notify(sections, seen, now):
@@ -295,6 +373,10 @@ def render(sections, now):
             + f'<h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
             + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
+            + (f'<p class="scores"><span title="Significance for the world, 0-10">World {i["world_score"]}/10</span>'
+               f'<span title="How much it affects you, 0-10">You {i["you_score"]}/10</span>'
+               + (f'<span>{i["outlets"]} outlets</span>' if i.get("outlets", 1) > 1 else "") + '</p>'
+               if "world" in i else "")
             + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p></article></li>'
             for i in items
@@ -315,13 +397,11 @@ def run(push=True):
     if not any(sections.values()):  # offline: keep yesterday's page and retry later
         raise RuntimeError("no feed could be read")
     if os.environ.get("OPENAI_API_KEY"):
-        for cat, items in sections.items():
-            for i in items:
-                i["section"] = cat
         try:
-            sections = apply_brief(sections, ask_openai([i for its in sections.values() for i in its]))
-        except Exception as e:  # the feeds' own summaries are a fine fallback
+            apply_brief(sections, ask_openai([i for its in sections.values() for i in its]))
+        except Exception as e:  # coverage-only scores and the feeds' summaries are a fine fallback
             print(f"openai failed, using feed summaries: {e}", file=sys.stderr, flush=True)
+    sections = rank(sections, now)
     if push:
         try:
             for link in notify(sections, seen, now):

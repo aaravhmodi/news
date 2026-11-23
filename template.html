@@ -40,6 +40,8 @@
   .summary { margin: .35rem 0 0; color: #3a3a3a; font-size: .95rem; }
   .why { margin: .6rem 0 0; padding: .45rem .6rem; background: #fbf1ef; border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; font-size: .88rem; }
   .why b { font-weight: 700; }
+  .scores { display: flex; flex-wrap: wrap; gap: .4rem; margin: .55rem 0 0; font-size: .75rem; font-weight: 600; }
+  .scores span { padding: .1rem .45rem; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); }
   .story-meta { margin: .55rem 0 0; color: var(--muted); font-size: .8rem; }
   .story-meta span { padding-inline: .3rem; }
   .empty { padding-block: 1.5rem; color: var(--muted); }
@@ -63,7 +65,7 @@
 <main id="main" tabindex="-1">
 %SECTIONS%
 </main>
-<footer>Headlines from the outlets' own RSS feeds. Each link goes to the original story.</footer>
+<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how significant a story is for the world and general knowledge: an AI rating on a fixed 0&ndash;10 scale (how many people, how strongly, lasting effects, how new), blended with how many outlets cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead.</footer>
 <script>
   // Enhance ordinary fragment links only after all sections are available.
   (() => {
