@@ -175,17 +175,24 @@ def notify(sections, seen, now):
 
 def render(sections, now):
     e = html.escape
-    nav = "".join(f'<a href="#s{n}">{e(c)}</a>' for n, c in enumerate(sections) if sections[c])
+    nav = "".join(
+        f'<a id="tab-s{n}" href="#s{n}">{e(c)}</a>'
+        for n, c in enumerate(sections)
+    )
     parts = []
     for n, (cat, items) in enumerate(sections.items()):
-        if not items:
-            continue
         lis = "".join(
-            f'<li><a href="{e(i["link"])}">{e(i["title"])}</a>'
-            f'<span>{e(i["source"])} · <time datetime="{i["when"].isoformat()}">{i["when"]:%b %d}</time></span></li>'
+            f'<li><article><h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
+            f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
+            f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p></article></li>'
             for i in items
         )
-        parts.append(f'<section id="s{n}"><h2>{e(cat)}</h2><ol>{lis}</ol></section>')
+        content = f'<ol>{lis}</ol>' if items else '<p class="empty">No recent stories in this section. Check back after the next update.</p>'
+        parts.append(
+            f'<section id="s{n}" aria-labelledby="heading-s{n}">'
+            f'<div class="section-heading"><h2 id="heading-s{n}">{e(cat)}</h2>'
+            f'<span>{len(items)} {"story" if len(items) == 1 else "stories"}</span></div>{content}</section>'
+        )
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     return page.replace("%UPDATED%", now.isoformat()).replace("%NAV%", nav).replace("%SECTIONS%", "".join(parts))
 
