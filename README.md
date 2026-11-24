@@ -18,6 +18,19 @@ The top of the page shows the S&P/TSX, S&P 500, Nasdaq, oil, gold and the loonie
 last close (Yahoo Finance's keyless chart API, `MARKETS` in `news.py`). The AI adds one line on what moved them,
 only when a story in the day's brief explains it, and what it means for you.
 
+## Ongoing
+
+The AI names the storyline each story belongs to when it unfolds over weeks or months (trade talks, a war, a
+trial) and reuses names from earlier days (`data/threads.json`). The Ongoing tab shows each storyline in
+today's news with where it stands, its latest headlines and one trusted headline a month from the past
+year (Google News searched a quarter at a time, refreshed weekly).
+
+## Your votes
+
+Every story has Relevant / Not for me buttons. Votes go to `POST /feedback` and are kept in
+`data/feedback.json` (newest 500). Each topic's net votes (capped at +/-4) are added to its You score, and the
+last 15 liked and disliked headlines are shown to the AI so it rates similar stories higher or lower.
+
 ## How stories are ranked
 
 `score()` in `news.py` blends these signals, each 0-10:

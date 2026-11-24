@@ -22,6 +22,14 @@
   .updated { margin: 0; color: var(--muted); font-size: .85rem; }
   .markets { max-width: 60rem; margin: 0 auto .75rem; padding: 0 1.25rem; font-size: .82rem; }
   .markets ul { list-style: none; margin: 0; padding: .55rem .8rem; display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; background: var(--tile); border: 1px solid var(--rule); border-radius: 10px; }
+  .thread h4 { margin: .8rem 0 0; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .timeline { display: block; margin: .3rem 0 0; }
+  .timeline li { padding: .4rem 0; background: none; border: 0; border-top: 1px solid var(--rule); border-radius: 0; font-size: .9rem; }
+  .timeline time { display: inline-block; min-width: 4.6rem; color: var(--muted); font-size: .8rem; }
+  .timeline .src { color: var(--muted); font-size: .8rem; }
+  .vote { position: relative; z-index: 1; display: flex; gap: .4rem; margin: .55rem 0 0; }  /* above the tile-wide link */
+  .vote button { min-height: 36px; padding: 0 .7rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--tile); color: var(--muted); font: inherit; font-size: .8rem; cursor: pointer; }
+  .vote button[aria-pressed="true"] { border-color: var(--ink); background: #ececea; color: var(--ink); font-weight: 700; }
   .markets li { padding: 0; background: none; border: 0; border-radius: 0; white-space: nowrap; }  /* not a story tile */
   .markets li span:first-child { color: var(--muted); }
   .markets .up { color: #1e7a3c; } .markets .down { color: var(--accent); }
@@ -77,7 +85,7 @@
 <main id="main" tabindex="-1">
 %SECTIONS%
 </main>
-<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year (big stories show <b>How it spreads</b> to markets and prices, and <b>Why they did it</b>), blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind.</footer>
+<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year (big stories show <b>How it spreads</b> to markets and prices, and <b>Why they did it</b>), blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. Tap <b>Relevant</b> or <b>Not for me</b> on any story: your votes tune which topics and stories rank higher from the next update. <b>Ongoing</b> follows storylines in today's news with a headline a month from the past year. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind.</footer>
 <script>
   // Enhance ordinary fragment links only after all sections are available.
   (() => {
@@ -151,9 +159,27 @@
     window.addEventListener('popstate', fromHash);
     fromHash();
   })();
+  // Relevant / Not for me: saved on the server (it tunes tomorrow's ranking) and remembered here.
+  (() => {
+    const votes = JSON.parse(localStorage.getItem('votes') || '{}');
+    const tiles = Array.from(document.querySelectorAll('article[data-link]'));
+    const show = () => tiles.forEach(tile => tile.querySelectorAll('.vote button').forEach(button =>
+      button.setAttribute('aria-pressed', String(votes[tile.dataset.link] === Number(button.dataset.vote)))));
+    tiles.forEach(tile => tile.querySelectorAll('.vote button').forEach(button => button.addEventListener('click', async () => {
+      const link = tile.dataset.link;
+      const vote = votes[link] === Number(button.dataset.vote) ? 0 : Number(button.dataset.vote);  // tap again to undo
+      const res = await fetch('feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ link, title: tile.dataset.title, section: tile.dataset.section, vote }) }).catch(() => null);
+      if (!res || !res.ok) return;
+      if (vote) votes[link] = vote; else delete votes[link];
+      localStorage.setItem('votes', JSON.stringify(votes));
+      show();
+    })));
+    show();
+  })();
   if (typeof Intl.RelativeTimeFormat === 'function') {
     const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-    for (const t of document.querySelectorAll('time')) {
+    for (const t of document.querySelectorAll('time:not(.month)')) {
       const m = (new Date(t.dateTime) - Date.now()) / 6e4;
       if (!Number.isFinite(m)) continue;
       t.title = new Date(t.dateTime).toLocaleString();

@@ -1,11 +1,20 @@
-import unittest
-from datetime import datetime, timezone
-
 import contextlib
 import io
+import json
 import os
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from functools import partial
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
 
-from news import add_coverage, apply_brief, notify, parse, rank, render, score
+import news
+from news import add_coverage, apply_brief, notify, parse, prefs, rank, render, score, track
 
 RSS = b"""<rss><channel><item><title>Budget &amp;amp; vote</title><link>https://cbc.ca/a</link>
 <pubDate>Mon, 23 Nov 2026 14:00:00 GMT</pubDate>
@@ -100,6 +109,57 @@ class T(unittest.TestCase):
             self.assertEqual(notify({"For You": [a], "Canada": [a]}, {}, now), ["https://x/a", "https://x/a"])
         self.assertIn("1 new stories\n• Rents fall\nOntario rents dropped 3%.", out.getvalue())
         self.assertIn('target="_blank" rel="noopener"', render({"Canada": [dict(a, source="CBC", when=now)]}, now))
+
+    def test_votes_tune_you_score(self):
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        fb = {f"https://x/{n}": {"section": "Sports", "vote": -1} for n in range(6)}
+        fb["https://x/w"] = {"section": "World", "vote": 1}
+        self.assertEqual(prefs(fb), {"Sports": -4, "World": 1})  # capped at -4
+        i = {"title": "Leafs win", "summary": "", "when": now, "outlets": 1, "world": 2, "you": 3, "pref": -4}
+        score(i, now)
+        self.assertEqual(i["you_score"], 0)  # never below 0
+
+    def test_feedback_endpoint(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(news, "FEEDBACK", Path(d) / "fb.json"):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), partial(news.Handler, directory=d))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            url = f"http://127.0.0.1:{server.server_address[1]}/feedback"
+
+            def post(body):
+                req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+                try:
+                    return urllib.request.urlopen(req).status
+                except urllib.error.HTTPError as e:
+                    return e.code
+
+            vote = {"link": "https://cbc.ca/a", "title": "Rents fall", "section": "Canada", "vote": 1}
+            self.assertEqual(post(vote), 204)
+            self.assertEqual(post(dict(vote, link="javascript:alert(1)")), 400)
+            self.assertEqual(post(dict(vote, vote=5)), 400)
+            self.assertEqual(json.loads((Path(d) / "fb.json").read_text())["https://cbc.ca/a"]["vote"], 1)
+            self.assertEqual(post(dict(vote, vote=0)), 204)  # tapping again clears it
+            self.assertEqual(json.loads((Path(d) / "fb.json").read_text()), {})
+            server.shutdown()
+            server.server_close()
+
+    def test_ongoing_storylines(self):
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        mk = lambda t, th, days: {"title": t, "link": "https://x/" + t, "source": "CBC", "thread": th,
+                                  "when": now - timedelta(days=days), "world_score": 6}
+        store = {"items": [{"thread": "Old talks", "title": "t", "link": "https://x/t", "source": "CBC",
+                            "when": (now - timedelta(days=20)).isoformat(), "world": 9}]}  # past 14 days: dropped
+        names = track({"Canada": [mk("Talks resume", "Canada-US trade talks", 0), mk("Plain", "", 0)]},
+                      [{"name": "Canada-US trade talks", "status": "Stalled on steel.", "query": "Canada US trade"}],
+                      store, now)
+        self.assertEqual(names, ["Canada-US trade talks"])
+        self.assertEqual(store["query"], {"Canada-US trade talks": "Canada US trade"})
+        store["history"]["Canada-US trade talks"] = {"fetched": now.isoformat(), "items": [
+            {"title": "Tariffs start", "link": "https://x/m", "source": "CBC", "when": "2026-03-04T00:00:00+00:00"}]}
+        view = news.ongoing(store, names, now)  # fetched today, so no network
+        page = render({"For You": [], "Ongoing": view}, now)
+        self.assertIn("<b>Where it stands:</b> Stalled on steel.", page)
+        self.assertIn('<time class="month" datetime="2026-03-04T00:00:00+00:00">Mar 2026</time>', page)
+        self.assertIn(">Talks resume</a>", page)
 
 
 if __name__ == "__main__":
