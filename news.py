@@ -27,7 +27,8 @@ def gnews(query):
 
 TRUSTED = {"CBC", "CTV News", "Global News", "The Globe and Mail", "Toronto Star", "The Canadian Press",
            "Canadian Press", "National Post", "CityNews Toronto", "CP24", "Financial Post", "BNN Bloomberg",
-           "Maclean's", "The Logic", "Reuters", "Bloomberg.com"}
+           "Maclean's", "The Logic", "Reuters", "Bloomberg.com", "BBC", "The Guardian", "NPR",
+           "The Associated Press", "AP News"}
 
 # Order matters: a story in two feeds lands in the first section that has it.
 FEEDS = {
@@ -65,6 +66,15 @@ FEEDS = {
         ("Global News", "https://globalnews.ca/politics/feed/"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-canada"),
     ],
+    "Society & Debates": [  # gender, race, rights and ethics: the questions people argue about
+        ("Google News", gnews('Canada (racism OR discrimination OR "assisted dying" OR abortion OR "free speech" '
+                              'OR "hate crime" OR transgender OR gender OR Indigenous OR antisemitism OR '
+                              'Islamophobia OR "notwithstanding clause" OR "Bill 21" OR ethics) when:5d')),
+        ("Google News", gnews('(racism OR "gender equality" OR "civil rights" OR "human rights" OR "free speech" '
+                              'OR "AI ethics" OR abortion OR transgender OR "religious freedom") when:2d')),
+        ("The Guardian", "https://www.theguardian.com/world/race/rss"),
+        ("The Guardian", "https://www.theguardian.com/world/gender/rss"),
+    ],
     "Ontario & Waterloo": [
         ("CBC Kitchener-Waterloo", "https://www.cbc.ca/webfeed/rss/rss-canada-kitchenerwaterloo"),
         ("CBC Toronto", "https://www.cbc.ca/webfeed/rss/rss-canada-toronto"),
@@ -101,6 +111,7 @@ FEEDS = {
 }
 PER_SECTION = 10
 MAX_AGE = timedelta(days=2)
+SLOW_AGE = timedelta(days=5)  # debates move slower than news
 RUN_AT = 7  # daily refresh and push, Toronto hour
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")  # OpenAI's cheapest tier
 FOR_YOU = 8
@@ -251,7 +262,9 @@ def collect(now):
                 items += got
             except Exception as e:  # one dead feed must not stop the run
                 print(f"skip {source} {url}: {e}", file=sys.stderr)
-        raw[cat] = [i for i in items if now - i["when"] < MAX_AGE]
+        # readers' letters to the Guardian are not news
+        age = SLOW_AGE if cat == "Society & Debates" else MAX_AGE
+        raw[cat] = [i for i in items if now - i["when"] < age and not re.search(r"bLetters?$", i["title"])]
     add_coverage([i for items in raw.values() for i in items])
     sections, shown = {}, []
     for cat, items in raw.items():  # each section's PER_SECTION most important stories, one tile per story
@@ -281,7 +294,13 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      9-10 directly changes their costs, loans, status or job market (OSAP, study/work permits,
      Ontario rent, Bank of Canada rates); 6-8 Canadian federal politics (what Carney's government
      does), US actions that hit Canada (tariffs, trade, ICE, the border), big moves in AI or robotics;
+     4-6 social questions a young Canadian is expected to have a view on (gender, race, rights, ethics);
      3-5 general knowledge they should know; 0-2 does not touch them.
+   - debate: if the story is about a contested social or ethical question where reasonable people disagree
+     (gender, race, rights, religion, speech, policing, immigration, AI ethics), the question in at most
+     12 words, e.g. "Should provinces override the Charter on gender policy?"; otherwise "".
+   - side_a, side_b: when there is a debate, the strongest case each side makes, in their own best terms,
+     at most 20 words each; otherwise "". Be fair to both and never say which side is right.
    Use only the given text: no guessing, no opinions, no hype. Be strict: most stories are 2-5.
 The reader: {READER}"""
 
@@ -291,9 +310,10 @@ BRIEF_SCHEMA = {
     "required": ["stories"],
     "properties": {
         "stories": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "world", "you"],
+            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "world", "you", "debate", "side_a", "side_b"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
-                           "world": {"type": "integer"}, "you": {"type": "integer"}},
+                           "world": {"type": "integer"}, "you": {"type": "integer"},
+                           "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"}},
         }},
     },
 }
@@ -334,6 +354,8 @@ def apply_brief(sections, brief):
                 i["summary"] = s["summary"].strip()
             i["why"] = s["why"].strip()
             i["world"], i["you"] = (max(0, min(10, s[k])) for k in ("world", "you"))
+            if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
+                i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 
 
 def notify(sections, seen, now):
@@ -374,6 +396,8 @@ def render(sections, now):
             + f'<h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
             + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
+            + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
+               '<p><b>The other side:</b> {}</p></div>'.format(*map(e, i["debate"])) if i.get("debate") else "")
             + (f'<p class="scores"><span title="Significance for the world, 0-10">World {i["world_score"]}/10</span>'
                f'<span title="How much it affects you, 0-10">You {i["you_score"]}/10</span>'
                + (f'<span>{i["outlets"]} outlets</span>' if i.get("outlets", 1) > 1 else "") + '</p>'

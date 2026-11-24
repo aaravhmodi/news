@@ -40,9 +40,11 @@ class T(unittest.TestCase):
                  "section": s, "outlets": 1} for t, s in (("a", "World"), ("b", "Tech")))
         sections = {"World": [a], "Tech": [b]}
         apply_brief(sections, {"stories": [
-            {"id": 1, "summary": " AI b ", "why": "rent", "world": 12, "you": 9},  # 12 clamps to 10
-            {"id": 0, "summary": "", "why": "", "world": 2, "you": 1},
-            {"id": 9, "summary": "x", "why": "y", "world": 5, "you": 5}]})  # unknown id ignored
+            {"id": 1, "summary": " AI b ", "why": "rent", "world": 12, "you": 9,  # 12 clamps to 10
+             "debate": "Should AI be <regulated>?", "side_a": "Safety", "side_b": "Innovation"},
+            {"id": 0, "summary": "", "why": "", "world": 2, "you": 1, "debate": "", "side_a": "", "side_b": ""},
+            {"id": 9, "summary": "x", "why": "y", "world": 5, "you": 5,  # unknown id ignored
+             "debate": "", "side_a": "", "side_b": ""}]})
         self.assertEqual((a["summary"], b["summary"], b["why"], b["world"]), ("feed a", "AI b", "rent", 10))
         out = rank(sections, now)
         self.assertEqual(list(out), ["For You", "World", "Tech"])
@@ -51,6 +53,8 @@ class T(unittest.TestCase):
         self.assertIn("Why it matters to you:</b> rent", page)
         self.assertIn('<p class="tag">Tech</p>', page)  # For You tiles name their topic
         self.assertIn("World 8/10", page)  # 0.75 * 10 + 0.25 * 0 coverage
+        self.assertIn("<b>The debate:</b> Should AI be &lt;regulated&gt;?", page)
+        self.assertEqual(page.count('class="debate"'), 2)  # b's tile in For You and in Tech; none for a
 
     def test_coverage_and_watchlist(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
