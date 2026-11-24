@@ -367,7 +367,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    (savings, tuition costs, prices, jobs, the loonie). If no story explains a move, do not guess why.
    If there is no MARKETS line, "".
 3. threads: for every thread name you used: name; status, where it stands now and what to watch next, at
-   most 35 words, from the given text; query, 2-5 search words that find its news over the past year.
+   most 35 words, from the given text; query, 2-4 broad search words for the whole storyline, not today's detail
+   ("Russia Ukraine war", not "Ukraine drones Russian ships Libya").
 LIKED and DISLIKED lines are headlines the reader marked relevant or not for them: rate "you" for
 similar stories higher or lower.
 The reader: {READER}"""
