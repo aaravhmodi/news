@@ -262,9 +262,9 @@ def collect(now):
                 items += got
             except Exception as e:  # one dead feed must not stop the run
                 print(f"skip {source} {url}: {e}", file=sys.stderr)
-        # readers' letters to the Guardian are not news
         age = SLOW_AGE if cat == "Society & Debates" else MAX_AGE
-        raw[cat] = [i for i in items if now - i["when"] < age and not re.search(r"bLetters?$", i["title"])]
+        # readers' letters to the Guardian are not news
+        raw[cat] = [i for i in items if now - i["when"] < age and not re.search(r"\bLetters?$", i["title"])]
     add_coverage([i for items in raw.values() for i in items])
     sections, shown = {}, []
     for cat, items in raw.items():  # each section's PER_SECTION most important stories, one tile per story
