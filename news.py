@@ -227,6 +227,8 @@ def price(name, value):
 WATCH = re.compile(r"(?-i:\bICE\b)|\b(tariffs?|CUSMA|USMCA|Carney|OSAP|Ontario|Waterloo|study permits?|"
                    r"work permits?|PGWP|immigration|rent|Bank of Canada|interest rates?|minimum wage|"
                    r"student loans?|tuition|housing|layoffs?|internships?)\b", re.I)
+# columns and analysis: "Opinion: ...", "James Moore: A tariff deal?", "... | Editorial"
+OPINION = re.compile(r"^(Opinion|Analysis|Editorial|Column)\b|^[A-Z][\w.'-]+ [A-Z][\w.'-]+: |\| (Opinion|Editorial)$")
 # Words too generic to tell two stories apart (they appear in many unrelated headlines).
 STOP = {"says", "said", "after", "over", "with", "from", "into", "about", "will", "what", "this", "that",
         "their", "they", "have", "more", "than", "amid", "could", "would", "news", "when", "where", "trump",
@@ -281,7 +283,8 @@ def score(i, now):
                       + i.get("pref", 0)))
     fresh = 0.5 ** ((now - i["when"]).total_seconds() / 3600 / 36)  # halves every 36h
     i["world_score"], i["you_score"] = round(world), round(you)
-    return (0.5 * world + 0.5 * you) * (0.6 + 0.4 * fresh)
+    news_first = 0.85 if OPINION.search(i["title"]) else 1  # a report beats a column on the same story
+    return (0.5 * world + 0.5 * you) * (0.6 + 0.4 * fresh) * news_first
 
 
 def rank(sections, now, per_topic=3):
@@ -294,8 +297,8 @@ def rank(sections, now, per_topic=3):
         if b is not i:  # another angle on the same event: its outlet becomes an extra link
             also(b, i)
     pool = [i for i in pool if best[i.get("thread") or i["link"]] is i]
-    for cat, items in sections.items():
-        sections[cat] = [i for i in pool if i in items]  # pool order is score order
+    for cat, items in sections.items():  # pool order is score order; collect() over-fetched for this trim
+        sections[cat] = [i for i in pool if i in items][:PER_SECTION]
     picks, per = [], {}
     for i in pool:
         if len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic and i["section"] != "Sports":
@@ -332,7 +335,7 @@ def collect(now):
             twin = next((tile for w, tile in shown if same_story(i["words"], w)), None)
             if twin:  # the same story from another outlet becomes an extra link on the first tile
                 also(twin, i)
-            elif len(picked) < PER_SECTION:
+            elif len(picked) < PER_SECTION + 4:  # spares: rank() merges same-storyline tiles, then trims
                 tile = dict(i, section=cat)
                 shown.append((i["words"], tile))
                 picked.append(tile)
@@ -351,6 +354,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
 1. For every id write:
    - summary: 2-3 plain, neutral sentences (at most 60 words): what happened, then the context a
      reader needs to understand it: what led to it, who the key players are, or what it changes.
+     Never mention the headline, the text or what it leaves out; if it says little, give background.
+     For an opinion column, say whose view it is and the argument in brief.
    - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
      (e.g. "Could push your rent up", "Changes work permits for students like you").
      If it barely affects them, give the general-knowledge reason in a few words. When ripple is 6 or

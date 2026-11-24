@@ -140,6 +140,12 @@ class T(unittest.TestCase):
         self.assertIn('Also at: <a href="https://CNN/a" target="_blank" rel="noopener">CNN</a>',
                       render({"Canada": [tile]}, now))
 
+    def test_reports_beat_columns(self):
+        for t in ("Opinion: Rents are too high", "James Moore: A tariff deal?", "Rent freeze | Editorial"):
+            self.assertTrue(news.OPINION.search(t), t)
+        for t in ("Carney announces tariffs", "Ukraine: drones hit port", "COP31: talks collapse"):
+            self.assertFalse(news.OPINION.search(t), t)
+
     def test_runs_twice_a_day(self):
         tz = news.ZoneInfo("America/Toronto")
         at = lambda d, h, m=0: datetime(2026, 11, d, h, m, tzinfo=tz)
