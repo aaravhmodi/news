@@ -79,7 +79,7 @@
 <a class="skip" href="#main">Skip to stories</a>
 <header class="masthead">
   <h1>The Brief</h1>
-  <p class="updated">Updated <time datetime="%UPDATED%">%UPDATED%</time></p>
+  <p class="updated">Updated <time class="stamp" datetime="%UPDATED%">%UPDATED_TEXT%</time><span class="ago"></span></p>
 </header>
 %MARKETS%
 <nav class="topic-nav" aria-label="News topics"><div class="topics">%NAV%</div></nav>
@@ -183,10 +183,12 @@
     for (const t of document.querySelectorAll('time:not(.month)')) {
       const m = (new Date(t.dateTime) - Date.now()) / 6e4;
       if (!Number.isFinite(m)) continue;
-      t.title = new Date(t.dateTime).toLocaleString();
-      t.textContent = m > -60 ? rtf.format(Math.round(m), 'minute')
+      const ago = m > -60 ? rtf.format(Math.round(m), 'minute')
         : m > -1440 ? rtf.format(Math.round(m / 60), 'hour')
         : rtf.format(Math.round(m / 1440), 'day');
+      if (t.classList.contains('stamp')) { t.nextElementSibling.textContent = ` · ${ago}`; continue; }  // keep the date
+      t.title = new Date(t.dateTime).toLocaleString();
+      t.textContent = ago;
     }
   }
 </script>

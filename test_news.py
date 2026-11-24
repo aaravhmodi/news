@@ -110,6 +110,18 @@ class T(unittest.TestCase):
         self.assertIn("1 new stories\n• Rents fall\nOntario rents dropped 3%.", out.getvalue())
         self.assertIn('target="_blank" rel="noopener"', render({"Canada": [dict(a, source="CBC", when=now)]}, now))
 
+    def test_one_tile_per_storyline_and_dated_stamp(self):
+        now = datetime(2026, 11, 24, 12, tzinfo=timezone.utc)  # 7:00 AM in Toronto
+        mk = lambda t, sec, th, you: {"title": t, "summary": "", "link": "https://x/" + t, "source": "BBC",
+                                      "when": now, "section": sec, "outlets": 1, "world": 5, "you": you,
+                                      "thread": th}
+        best, other, alone = mk("Huang back", "Tech", "Nvidia CEO", 9), mk("Shares soar", "Business", "Nvidia CEO", 5), \
+            mk("Rents fall", "Canada", "", 4)
+        out = rank({"Tech": [best], "Business": [other], "Canada": [alone]}, now)
+        self.assertEqual(out["For You"], [best, alone])  # the weaker Nvidia angle is gone everywhere
+        self.assertEqual(out["Business"], [])
+        self.assertIn('datetime="2026-11-24T12:00:00+00:00">Tue, Nov 24, 7:00 AM</time>', render(out, now))
+
     def test_votes_tune_you_score(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
         fb = {f"https://x/{n}": {"section": "Sports", "vote": -1} for n in range(6)}

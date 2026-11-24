@@ -279,10 +279,15 @@ def score(i, now):
 
 
 def rank(sections, now, per_topic=3):
-    """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'."""
-    for items in sections.values():
-        items.sort(key=lambda i: score(i, now), reverse=True)
+    """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'.
+    One tile per storyline: other angles on the same event stay on the Ongoing tab."""
     pool = sorted((i for items in sections.values() for i in items), key=lambda i: score(i, now), reverse=True)
+    best = {}
+    for i in pool:
+        best.setdefault(i.get("thread") or i["link"], i)
+    pool = [i for i in pool if best[i.get("thread") or i["link"]] is i]
+    for cat, items in sections.items():
+        sections[cat] = [i for i in pool if i in items]  # pool order is score order
     picks, per = [], {}
     for i in pool:
         if len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic and i["section"] != "Sports":
@@ -359,7 +364,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - thread: if the story is one chapter of something that unfolds over weeks or months (a war, trade
      talks, a trial, an election, a scandal, a strike, a negotiation, a crisis), a short name for that
      storyline, at most 5 words, e.g. "Canada-US trade talks". Reuse a name from the THREADS line exactly
-     when it is the same storyline, and give every story about it the same name. Otherwise "".
+     when it is the same storyline, and give every story about it the same name. Stories that cover the
+     same event from different angles (reaction, markets, analysis) always share a name. Otherwise "".
    What happened comes only from the given text. Effects and motives may use well-established background
    knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
 2. markets: if a MARKETS line is given, at most 35 words for this reader: what the biggest moves were,
@@ -607,7 +613,9 @@ def render(sections, now, moves=(), note=""):
             f'<h2 id="heading-s{n}">{e(cat)}</h2>{content}</section>'
         )
     page = (ROOT / "template.html").read_text(encoding="utf-8")
-    return (page.replace("%UPDATED%", now.isoformat()).replace("%MARKETS%", strip).replace("%NAV%", nav)
+    t = now.astimezone(ZoneInfo("America/Toronto"))
+    stamp = f"{t:%a, %b} {t.day}, {t.hour % 12 or 12}:{t:%M %p}"  # e.g. Tue, Nov 24, 7:00 AM (Windows has no %-d)
+    return (page.replace("%UPDATED_TEXT%", stamp).replace("%UPDATED%", now.isoformat()).replace("%MARKETS%", strip).replace("%NAV%", nav)
             .replace("%SECTIONS%", "".join(parts)))
 
 
