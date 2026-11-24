@@ -297,7 +297,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - summary: one plain, neutral sentence (at most 25 words) saying what happened.
    - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
      (e.g. "Could push your rent up", "Changes work permits for students like you").
-     If it barely affects them, give the general-knowledge reason in a few words.
+     If it barely affects them, give the general-knowledge reason in a few words. When ripple is 6 or
+     more, connect the chain to them (e.g. "Pricier oil means you pay more for gas and groceries").
    - Three 0-10 ratings of its importance to the world (not to this reader):
      reach: how many people and countries it touches. 0-2 a town or a celebrity; 4 one country;
        6 a region or a whole industry; 8 many countries; 10 most of humanity.
@@ -307,8 +308,13 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
        policy; 10 it reshapes world affairs.
      lasting: will it matter in a year? 0-2 forgotten next week; 5 for months; 8 for years; 10 for decades.
      Sports results and celebrity news are 0-2 on all three.
-   - knock_on: if ripple is 6 or more, the main knock-on effect on other events in at most 15 words
-     (e.g. "Raises oil prices and pressures central banks to hold rates"); otherwise "".
+   - knock_on: if ripple is 6 or more, how it spreads, step by step with arrows, at most 30 words,
+     including stock markets, prices or rates when they are affected (e.g. "Strikes on Iran -> oil jumps
+     -> stocks fall, airlines and shippers hit hardest -> gas and grocery prices rise in Canada"); otherwise "".
+   - motive: if ripple is 6 or more and a government, leader or company made a choice, why they did it, at
+     most 30 words: the reason they give, then the reasons analysts or critics commonly point to, each
+     attributed (e.g. "Trump says it stops Iran's nuclear program; analysts also point to pressure on
+     Tehran before talks"). Never present a guess as fact. Otherwise "".
    - you (0-10): how directly it affects this reader's life, money, career or rights.
      9-10 directly changes their costs, loans, status or job market (OSAP, study/work permits,
      Ontario rent, Bank of Canada rates); 6-8 Canadian federal politics (what Carney's government
@@ -321,7 +327,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      12 words, e.g. "Should provinces override the Charter on gender policy?"; otherwise "".
    - side_a, side_b: when there is a debate, the strongest case each side makes, in their own best terms,
      at most 20 words each; otherwise "". Be fair to both and never say which side is right.
-   Use only the given text: no guessing, no opinions, no hype. Be strict: most stories are 2-5.
+   What happened comes only from the given text. Effects and motives may use well-established background
+   knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
 The reader: {READER}"""
 
 BRIEF_SCHEMA = {
@@ -330,11 +337,12 @@ BRIEF_SCHEMA = {
     "required": ["stories"],
     "properties": {
         "stories": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "you",
-                                                                  "debate", "side_a", "side_b"],
+            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
+                                                                  "you", "debate", "side_a", "side_b"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
                            "reach": {"type": "integer"}, "ripple": {"type": "integer"},
-                           "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "you": {"type": "integer"},
+                           "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "motive": {"type": "string"},
+                           "you": {"type": "integer"},
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"}},
         }},
     },
@@ -377,7 +385,7 @@ def apply_brief(sections, brief):
             i["why"] = s["why"].strip()
             reach, ripple, lasting, i["you"] = (max(0, min(10, s[k])) for k in ("reach", "ripple", "lasting", "you"))
             i["world"] = 0.3 * reach + 0.45 * ripple + 0.25 * lasting  # knock-on effects weigh most
-            i["knock_on"] = s.get("knock_on", "").strip()
+            i["knock_on"], i["motive"] = (s.get(k, "").strip() for k in ("knock_on", "motive"))
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 
@@ -422,7 +430,10 @@ def render(sections, now):
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
                '<p><b>The other side:</b> {}</p></div>'.format(*map(e, i["debate"])) if i.get("debate") else "")
-            + (f'<p class="knock"><b>Knock-on effects:</b> {e(i["knock_on"])}</p>' if i.get("knock_on") else "")
+            + ('<div class="knock">'
+               + (f'<p><b>How it spreads:</b> {e(i["knock_on"])}</p>' if i.get("knock_on") else "")
+               + (f'<p><b>Why they did it:</b> {e(i["motive"])}</p>' if i.get("motive") else "")
+               + '</div>' if i.get("knock_on") or i.get("motive") else "")
             + (f'<p class="scores"><span title="Significance for the world, 0-10">World {i["world_score"]}/10</span>'
                f'<span title="How much it affects you, 0-10">You {i["you_score"]}/10</span>'
                + (f'<span>{i["outlets"]} outlets, {i["regions"]} regions</span>' if i.get("outlets", 1) > 1 else "")

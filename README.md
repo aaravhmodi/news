@@ -24,7 +24,8 @@ IEEE Spectrum, Hacker News), refreshed once a day at 7am Toronto time.
 - **World impact** (AI, fixed anchored scales): reach (how many people and countries), ripple (how much it
   sets off other events: markets, prices, trade, wars, elections, other governments' decisions) and lasting
   (will it matter in a year). AI world = 0.3 reach + 0.45 ripple + 0.25 lasting. Stories with ripple 6+
-  get a "Knock-on effects" line.
+  get "How it spreads" (the chain to markets, prices and you) and "Why they did it" (the stated reason
+  and the reasons analysts give, attributed).
 - **You**: the AI's rating of how directly it affects a young Canadian student (OSAP, permits, rent, Carney's
   government, US moves that hit Canada, AI/robotics, social questions you're expected to have a view on),
   +2 for watchlist words (`WATCH`).
