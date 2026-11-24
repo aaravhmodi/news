@@ -473,15 +473,25 @@ def track(sections, threads, store, now):
     return sorted(live, key=lambda n: max(i["world"] for i in by[n]), reverse=True)[:10]
 
 
+def keys(text):
+    """Word stems (first 6 letters) for loose matching: reinstated ~ reinstatement."""
+    return {w[:6] for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in
+            {"the", "and", "for", "with", "after", "over", "from", "into"}}
+
+
 def past_year(query, now):
     """One trusted headline a month over the past year, oldest first. Google News returns at most
-    100 results a search, so the year is searched a quarter at a time to spread them out."""
+    100 results a search, so the year is searched a quarter at a time to spread them out. Google
+    matches loosely, so a headline must carry all the query's words (all but one past three)."""
+    want = keys(query)
+    need = len(want) if len(want) <= 3 else len(want) - 1
     months = {}
     for k in range(4):
         before, after = (now - timedelta(days=91 * k)).date(), (now - timedelta(days=91 * (k + 1))).date()
         for i in parse(fetch(gnews(f"{query} after:{after} before:{before}")), "Google News"):
             month = f"{i['when']:%Y-%m}"
-            if i["source"] in TRUSTED and now - i["when"] > KEEP_THREADS and month not in months:
+            if (i["source"] in TRUSTED and now - i["when"] > KEEP_THREADS and month not in months
+                    and len(want & keys(i["title"])) >= need):
                 months[month] = {"title": i["title"], "link": i["link"], "source": i["source"],
                                  "when": i["when"].isoformat()}
     return [months[m] for m in sorted(months)]

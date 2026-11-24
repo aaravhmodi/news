@@ -160,6 +160,7 @@ class T(unittest.TestCase):
         self.assertIn("<b>Where it stands:</b> Stalled on steel.", page)
         self.assertIn('<time class="month" datetime="2026-03-04T00:00:00+00:00">Mar 2026</time>', page)
         self.assertIn(">Talks resume</a>", page)
+        self.assertEqual(news.keys("Nvidia reinstated"), news.keys("NVIDIA reinstatement"))  # stems match
 
 
 if __name__ == "__main__":
