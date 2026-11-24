@@ -385,7 +385,7 @@ def ask_openai(items, moves=()):
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
-        "max_output_tokens": 24000,  # a run uses ~10k; truncated JSON would drop the whole brief
+        "max_output_tokens": 16000,  # a brief is ~11k; caps a reply that runs on after its JSON
         "instructions": BRIEF_PROMPT,
         "input": lines,
         "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},
@@ -401,7 +401,7 @@ def ask_openai(items, moves=()):
           data.get("usage", {}).get("output_tokens"), "out", flush=True)
     text = next(c["text"] for o in data["output"] if o["type"] == "message"
                 for c in o["content"] if c["type"] == "output_text")
-    return json.loads(text)
+    return json.JSONDecoder().raw_decode(text.lstrip())[0]  # the model sometimes keeps writing after the JSON
 
 
 def apply_brief(sections, brief):
