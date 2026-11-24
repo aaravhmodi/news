@@ -1,7 +1,11 @@
 import unittest
 from datetime import datetime, timezone
 
-from news import add_coverage, apply_brief, parse, rank, render, score
+import contextlib
+import io
+import os
+
+from news import add_coverage, apply_brief, notify, parse, rank, render, score
 
 RSS = b"""<rss><channel><item><title>Budget &amp;amp; vote</title><link>https://cbc.ca/a</link>
 <pubDate>Mon, 23 Nov 2026 14:00:00 GMT</pubDate>
@@ -86,6 +90,15 @@ class T(unittest.TestCase):
         self.assertIn("<b>US$0.712</b>", page)
         self.assertIn("<p>Stocks up &lt;a lot&gt;</p>", page)
         self.assertNotIn("%MARKETS%", render({"World": []}, now))  # no data, no strip
+
+    def test_notify_has_summaries(self):
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        a = {"title": "Rents fall", "summary": "Ontario rents dropped 3%.", "link": "https://x/a"}
+        os.environ.pop("NTFY_TOPIC", None)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(notify({"For You": [a], "Canada": [a]}, {}, now), ["https://x/a", "https://x/a"])
+        self.assertIn("1 new stories\n• Rents fall\nOntario rents dropped 3%.", out.getvalue())
+        self.assertIn('target="_blank" rel="noopener"', render({"Canada": [dict(a, source="CBC", when=now)]}, now))
 
 
 if __name__ == "__main__":

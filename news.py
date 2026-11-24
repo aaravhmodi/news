@@ -426,17 +426,21 @@ def notify(sections, seen, now):
     count = len({i["link"] for items in new.values() for i in items})
     if not count:
         return []
-    if sections.get("For You"):
-        body = "\n".join(f"• {i['title']}" for i in sections["For You"])
-    else:
-        body = "\n".join(f"{cat}: {items[0]['title']}" for cat, items in new.items() if items)
+    picks = sections.get("For You") or [items[0] for items in new.values() if items]
+    # each headline with its one-line summary underneath; expand the notification to read them
+    body = "\n\n".join(f"• {i['title']}" + (f"\n{i['summary']}" if i.get("summary") else "") for i in picks)
+    body = body.encode()[:4000].decode(errors="ignore")  # ntfy turns longer messages into attachments
+    site = os.environ.get("SITE_URL", "")
+    actions = [{"action": "view", "label": "Open brief", "url": site}] if site else []
+    actions.append({"action": "view", "label": "Top story", "url": picks[0]["link"]})
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
         req = urllib.request.Request(
             f"https://ntfy.sh/{topic}",
             data=body.encode(),
-            # headers must be latin-1, so headlines go in the body
-            headers={"Title": f"{count} new stories", "Click": os.environ.get("SITE_URL", ""), "Tags": "newspaper"},
+            # headers must be latin-1, so headlines go in the body; json.dumps escapes to ASCII
+            headers={"Title": f"{count} new stories", "Click": site, "Tags": "newspaper",
+                     "Actions": json.dumps(actions)},
         )
         urllib.request.urlopen(req, timeout=20).close()
     else:
@@ -459,7 +463,7 @@ def render(sections, now, moves=(), note=""):
         lis = "".join(
             '<li><article>'
             + (f'<p class="tag">{e(i["section"])}</p>' if cat == "For You" and i.get("section") else "")
-            + f'<h3><a href="{e(i["link"])}">{e(i["title"])}</a></h3>'
+            + f'<h3><a href="{e(i["link"])}" target="_blank" rel="noopener">{e(i["title"])}</a></h3>'
             + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
@@ -495,12 +499,14 @@ def run(push=True):
         raise RuntimeError("no feed could be read")
     moves, note = markets(), ""
     if os.environ.get("OPENAI_API_KEY"):
-        try:
-            brief = ask_openai([i for its in sections.values() for i in its], moves)
-            apply_brief(sections, brief)
-            note = brief.get("markets", "").strip()
-        except Exception as e:  # coverage-only scores and the feeds' summaries are a fine fallback
-            print(f"openai failed, using feed summaries: {e}", file=sys.stderr, flush=True)
+        for attempt in (1, 2):  # an odd reply now and then is not JSON; one retry fixes it
+            try:
+                brief = ask_openai([i for its in sections.values() for i in its], moves)
+                apply_brief(sections, brief)
+                note = brief.get("markets", "").strip()
+                break
+            except Exception as e:  # coverage-only scores and the feeds' summaries are a fine fallback
+                print(f"openai failed (try {attempt}), using feed summaries: {e}", file=sys.stderr, flush=True)
     sections = rank(sections, now)
     if push:
         try:
