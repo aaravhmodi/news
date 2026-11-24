@@ -83,10 +83,11 @@ class T(unittest.TestCase):
 
     def test_markets_strip(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
-        page = render({"World": []}, now, [("S&P/TSX", 34082.12, 2.69), ("Oil", 58.2, -1.04),
-                                           ("Loonie", 0.7123, 0.1)], "Stocks up <a lot>")
+        page = render({"World": []}, now, [("S&P/TSX", 34082.12, 2.69), ("S&P 500", 7237.17, 4.7),
+                                           ("Oil", 58.2, -1.04), ("Loonie", 0.7123, 0.1)], "Stocks up <a lot>")
         self.assertIn("<b>34,082</b>", page)
-        self.assertIn('<b>$58.20</b> <span class="down"><span aria-hidden="true">&#9660;</span> -1.0%', page)
+        self.assertIn("<b>7,237</b>", page)  # an index, not dollars
+        self.assertIn('<b>US$58.20</b> <span class="down"><span aria-hidden="true">&#9660;</span> -1.0%', page)
         self.assertIn("<b>US$0.712</b>", page)
         self.assertIn("<p>Stocks up &lt;a lot&gt;</p>", page)
         self.assertNotIn("%MARKETS%", render({"World": []}, now))  # no data, no strip

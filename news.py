@@ -205,7 +205,8 @@ def markets():
 
 
 def price(name, value):
-    return f"US${value:.3f}" if name == "Loonie" else f"${value:,.2f}" if value < 10000 else f"{value:,.0f}"
+    """Indexes are points, oil and gold are US dollars, the loonie is in US dollars."""
+    return f"US${value:.3f}" if name == "Loonie" else f"US${value:,.2f}" if name in ("Oil", "Gold") else f"{value:,.0f}"
 
 
 # --- Importance scoring ---------------------------------------------------------------
