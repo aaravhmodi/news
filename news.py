@@ -218,19 +218,31 @@ def same_story(a, b):
     return shared == 2 and (shared / len(sa | sb) >= 0.3 or bool(pairs))
 
 
+# Where each outlet is based; any outlet not listed is Canadian. A story covered in several
+# regions is news all over the world, not just at home.
+REGION = {**dict.fromkeys(["BBC", "The Guardian", "Reuters"], "UK"),
+          **dict.fromkeys(["The Hindu", "Indian Express"], "India"), "Al Jazeera": "Middle East",
+          **dict.fromkeys(["NPR", "Politico", "The Verge", "Wired", "TechCrunch", "Ars Technica", "IEEE Spectrum",
+                           "MIT Technology Review", "Hacker News", "Bloomberg.com", "The Associated Press",
+                           "AP News"], "US")}
+
+
 def add_coverage(items):
-    """i["outlets"]: how many different outlets carry the same story. Direct matches only, so
-    one generic word can't chain unrelated stories together."""
+    """i["outlets"] and i["regions"]: how many different outlets, and how many world regions, carry the
+    same story. Direct matches only, so one generic word can't chain unrelated stories together."""
     for i in items:
         i["words"] = words(i["title"])
     for a in items:
-        a["outlets"] = len({b["source"] for b in items if same_story(a["words"], b["words"])})
+        sources = {b["source"] for b in items if same_story(a["words"], b["words"])}
+        a["outlets"], a["regions"] = len(sources), len({REGION.get(src, "Canada") for src in sources})
 
 
 def score(i, now):
     """0-10 importance used for ranking. Sets i["world_score"] and i["you_score"] for display."""
     coverage = min(10.0, 3.3 * math.log2(i["outlets"]))  # 1 outlet 0, 2 -> 3.3, 4 -> 6.6, 8+ -> 10
-    world = 0.75 * i["world"] + 0.25 * coverage if "world" in i else coverage
+    spread = min(10.0, 4.0 * (i.get("regions", 1) - 1))  # 1 region 0, 2 -> 4, 3 -> 8, 4+ -> 10
+    world = (0.6 * i["world"] + 0.2 * coverage + 0.2 * spread if "world" in i
+             else 0.5 * coverage + 0.5 * spread)
     you = min(10, i.get("you", 0) + (2 if WATCH.search(f'{i["title"]} {i["summary"]}') else 0))
     fresh = 0.5 ** ((now - i["when"]).total_seconds() / 3600 / 36)  # halves every 36h
     i["world_score"], i["you_score"] = round(world), round(you)
@@ -286,10 +298,17 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
      (e.g. "Could push your rent up", "Changes work permits for students like you").
      If it barely affects them, give the general-knowledge reason in a few words.
-   - world (0-10): how significant this is for the world and for general knowledge, judged on
-     scale (how many people), magnitude (how strongly), potential (lasting consequences) and novelty.
-     0-2 celebrity, sports results, minor local news; 3-4 notable national news; 5-6 major national
-     policy or a big industry shift; 7-8 major international event affecting millions; 9-10 historic.
+   - Three 0-10 ratings of its importance to the world (not to this reader):
+     reach: how many people and countries it touches. 0-2 a town or a celebrity; 4 one country;
+       6 a region or a whole industry; 8 many countries; 10 most of humanity.
+     ripple: how much it sets off or changes other events: markets, prices, trade, wars and
+       diplomacy, elections, supply chains, other governments' decisions. 0-2 nothing follows from it;
+       5 it shifts one country's politics or one market; 8 it moves global markets or other countries'
+       policy; 10 it reshapes world affairs.
+     lasting: will it matter in a year? 0-2 forgotten next week; 5 for months; 8 for years; 10 for decades.
+     Sports results and celebrity news are 0-2 on all three.
+   - knock_on: if ripple is 6 or more, the main knock-on effect on other events in at most 15 words
+     (e.g. "Raises oil prices and pressures central banks to hold rates"); otherwise "".
    - you (0-10): how directly it affects this reader's life, money, career or rights.
      9-10 directly changes their costs, loans, status or job market (OSAP, study/work permits,
      Ontario rent, Bank of Canada rates); 6-8 Canadian federal politics (what Carney's government
@@ -311,9 +330,11 @@ BRIEF_SCHEMA = {
     "required": ["stories"],
     "properties": {
         "stories": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "world", "you", "debate", "side_a", "side_b"],
+            "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "you",
+                                                                  "debate", "side_a", "side_b"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
-                           "world": {"type": "integer"}, "you": {"type": "integer"},
+                           "reach": {"type": "integer"}, "ripple": {"type": "integer"},
+                           "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "you": {"type": "integer"},
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"}},
         }},
     },
@@ -354,7 +375,9 @@ def apply_brief(sections, brief):
             if s["summary"].strip():
                 i["summary"] = s["summary"].strip()
             i["why"] = s["why"].strip()
-            i["world"], i["you"] = (max(0, min(10, s[k])) for k in ("world", "you"))
+            reach, ripple, lasting, i["you"] = (max(0, min(10, s[k])) for k in ("reach", "ripple", "lasting", "you"))
+            i["world"] = 0.3 * reach + 0.45 * ripple + 0.25 * lasting  # knock-on effects weigh most
+            i["knock_on"] = s.get("knock_on", "").strip()
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 
@@ -399,9 +422,11 @@ def render(sections, now):
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
                '<p><b>The other side:</b> {}</p></div>'.format(*map(e, i["debate"])) if i.get("debate") else "")
+            + (f'<p class="knock"><b>Knock-on effects:</b> {e(i["knock_on"])}</p>' if i.get("knock_on") else "")
             + (f'<p class="scores"><span title="Significance for the world, 0-10">World {i["world_score"]}/10</span>'
                f'<span title="How much it affects you, 0-10">You {i["you_score"]}/10</span>'
-               + (f'<span>{i["outlets"]} outlets</span>' if i.get("outlets", 1) > 1 else "") + '</p>'
+               + (f'<span>{i["outlets"]} outlets, {i["regions"]} regions</span>' if i.get("outlets", 1) > 1 else "")
+               + '</p>'
                if "world" in i else "")
             + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p></article></li>'

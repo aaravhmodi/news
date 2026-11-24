@@ -40,11 +40,13 @@ class T(unittest.TestCase):
                  "section": s, "outlets": 1} for t, s in (("a", "World"), ("b", "Tech")))
         sections = {"World": [a], "Tech": [b]}
         apply_brief(sections, {"stories": [
-            {"id": 1, "summary": " AI b ", "why": "rent", "world": 12, "you": 9,  # 12 clamps to 10
+            {"id": 1, "summary": " AI b ", "why": "rent", "reach": 12, "ripple": 10, "lasting": 10,  # 12 -> 10
+             "knock_on": "Moves markets", "you": 9,
              "debate": "Should AI be <regulated>?", "side_a": "Safety", "side_b": "Innovation"},
-            {"id": 0, "summary": "", "why": "", "world": 2, "you": 1, "debate": "", "side_a": "", "side_b": ""},
-            {"id": 9, "summary": "x", "why": "y", "world": 5, "you": 5,  # unknown id ignored
-             "debate": "", "side_a": "", "side_b": ""}]})
+            {"id": 0, "summary": "", "why": "", "reach": 2, "ripple": 2, "lasting": 2, "knock_on": "", "you": 1,
+             "debate": "", "side_a": "", "side_b": ""},
+            {"id": 9, "summary": "x", "why": "y", "reach": 5, "ripple": 5, "lasting": 5, "knock_on": "", "you": 5,
+             "debate": "", "side_a": "", "side_b": ""}]})  # unknown id ignored
         self.assertEqual((a["summary"], b["summary"], b["why"], b["world"]), ("feed a", "AI b", "rent", 10))
         out = rank(sections, now)
         self.assertEqual(list(out), ["For You", "World", "Tech"])
@@ -52,7 +54,8 @@ class T(unittest.TestCase):
         page = render(out, now)
         self.assertIn("Why it matters to you:</b> rent", page)
         self.assertIn('<p class="tag">Tech</p>', page)  # For You tiles name their topic
-        self.assertIn("World 8/10", page)  # 0.75 * 10 + 0.25 * 0 coverage
+        self.assertIn("World 6/10", page)  # 0.6 * AI 10, no coverage or spread
+        self.assertIn("<b>Knock-on effects:</b> Moves markets", page)
         self.assertIn("<b>The debate:</b> Should AI be &lt;regulated&gt;?", page)
         self.assertEqual(page.count('class="debate"'), 2)  # b's tile in For You and in Tech; none for a
 
@@ -66,8 +69,9 @@ class T(unittest.TestCase):
         cop = [mk("Cop31 collapses: why did climate talks fall apart?", "BBC"),
                mk("Why did COP31 climate talks collapse without a deal?", "NPR")]
         add_coverage(same + [other] + cop)
-        self.assertEqual(cop[0]["outlets"], 2)  # plural folded: collapses ~ collapse
+        self.assertEqual((cop[0]["outlets"], cop[0]["regions"]), (2, 2))  # plural folded; BBC UK, NPR US
         self.assertEqual([i["outlets"] for i in same + [other]], [2, 2, 2, 1])  # two outlets, one story
+        self.assertEqual(same[0]["regions"], 1)  # CBC and CTV are both Canadian
         score(same[0], now), score(other, now)
         self.assertEqual(same[0]["you_score"], 2)  # watchlist: Carney, tariffs
         self.assertEqual(other["you_score"], 0)  # "Ice storm" is not ICE

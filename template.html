@@ -42,6 +42,7 @@
   .why b { font-weight: 700; }
   .debate { margin: .5rem 0 0; padding: .45rem .6rem; background: #f1f3f7; border-left: 3px solid #4a5a78; border-radius: 0 6px 6px 0; font-size: .88rem; }
   .debate p { margin: 0; }
+  .knock { margin: .5rem 0 0; padding: .45rem .6rem; background: #f4f4f1; border-left: 3px solid #8a8a84; border-radius: 0 6px 6px 0; font-size: .88rem; }
   .debate p + p { margin-top: .25rem; }
   .scores { display: flex; flex-wrap: wrap; gap: .4rem; margin: .55rem 0 0; font-size: .75rem; font-weight: 600; }
   .scores span { padding: .1rem .45rem; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); }
@@ -68,7 +69,7 @@
 <main id="main" tabindex="-1">
 %SECTIONS%
 </main>
-<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how significant a story is for the world and general knowledge: an AI rating on a fixed 0&ndash;10 scale (how many people, how strongly, lasting effects, how new), blended with how many outlets cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind.</footer>
+<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year, blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind.</footer>
 <script>
   // Enhance ordinary fragment links only after all sections are available.
   (() => {

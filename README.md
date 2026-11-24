@@ -14,17 +14,25 @@ IEEE Spectrum, Hacker News), refreshed once a day at 7am Toronto time.
 
 ## How stories are ranked
 
-`score()` in `news.py` blends four signals, each 0-10:
+`score()` in `news.py` blends these signals, each 0-10:
 
 - **Coverage**: how many different outlets in the day's scrape carry the same story (headlines matched on
   shared words or a shared two-word name). In the research on ranking news, the number of sources covering
   an event is the strongest free sign that it matters.
-- **World**: the AI's significance rating on a fixed scale (how many people, how strongly, lasting effects,
-  novelty; the factors News Minimalist uses). Shown as World = 0.75 x AI + 0.25 x coverage.
+- **Spread**: how many world regions those outlets come from (Canada, US, UK, India, Middle East; `REGION`).
+  2 regions = 4, 3 = 8, 4 or more = 10.
+- **World impact** (AI, fixed anchored scales): reach (how many people and countries), ripple (how much it
+  sets off other events: markets, prices, trade, wars, elections, other governments' decisions) and lasting
+  (will it matter in a year). AI world = 0.3 reach + 0.45 ripple + 0.25 lasting. Stories with ripple 6+
+  get a "Knock-on effects" line.
 - **You**: the AI's rating of how directly it affects a young Canadian student (OSAP, permits, rent, Carney's
-  government, US moves that hit Canada, AI/robotics), +2 for watchlist words (`WATCH`).
+  government, US moves that hit Canada, AI/robotics, social questions you're expected to have a view on),
+  +2 for watchlist words (`WATCH`).
 - **Freshness**: a story's weight halves every 36 hours, down to 60% of its score.
 
-Rank = (World + You) / 2 x freshness. For You is the top 8 (at most 3 per topic, no sport); each topic is
-sorted the same way, with one tile per story. Without an OpenAI key, World is coverage alone and You is the
-watchlist.
+World = 0.6 AI world + 0.2 coverage + 0.2 spread. Rank = (World + You) / 2 x freshness. For You is the top 8
+(at most 3 per topic, no sport); each topic is sorted the same way, with one tile per story. Without an
+OpenAI key, World is half coverage, half spread, and You is the watchlist.
+
+On contested social and ethical stories (gender, race, rights, religion, speech, AI ethics) the AI adds
+"The debate": the question and the strongest case each side makes, without picking one.
