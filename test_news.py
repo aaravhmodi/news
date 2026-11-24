@@ -87,6 +87,9 @@ class T(unittest.TestCase):
         self.assertEqual((cop[0]["outlets"], cop[0]["regions"]), (2, 2))  # plural folded; BBC UK, NPR US
         self.assertEqual([i["outlets"] for i in same + [other]], [2, 2, 2, 1])  # two outlets, one story
         self.assertEqual(same[0]["regions"], 1)  # CBC and CTV are both Canadian
+        short = mk("Live updates", "CNN")
+        add_coverage([short])
+        self.assertEqual(short["outlets"], 1)  # no content words, still its own outlet
         score(same[0], now), score(other, now)
         self.assertEqual(same[0]["you_score"], 2)  # watchlist: Carney, tariffs
         self.assertEqual(other["you_score"], 0)  # "Ice storm" is not ICE

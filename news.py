@@ -266,7 +266,8 @@ def add_coverage(items):
     for i in items:
         i["words"] = words(i["title"])
     for a in items:
-        sources = {b["source"] for b in items if same_story(a["words"], b["words"])}
+        # a story always counts its own outlet, even a headline too short to match itself
+        sources = {a["source"]} | {b["source"] for b in items if same_story(a["words"], b["words"])}
         a["outlets"], a["regions"] = len(sources), len({REGION.get(src, "Canada") for src in sources})
 
 
