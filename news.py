@@ -296,8 +296,9 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      does), US actions that hit Canada (tariffs, trade, ICE, the border), big moves in AI or robotics;
      4-6 social questions a young Canadian is expected to have a view on (gender, race, rights, ethics);
      3-5 general knowledge they should know; 0-2 does not touch them.
-   - debate: if the story is about a contested social or ethical question where reasonable people disagree
-     (gender, race, rights, religion, speech, policing, immigration, AI ethics), the question in at most
+   - debate: only if the story's main subject is a contested moral or social question that people are
+     expected to take a side on (gender, race, rights, religion, speech, policing, immigration, AI ethics),
+     not a policy detail or a product feature; at most 1 story in 10. The question in at most
      12 words, e.g. "Should provinces override the Charter on gender policy?"; otherwise "".
    - side_a, side_b: when there is a debate, the strongest case each side makes, in their own best terms,
      at most 20 words each; otherwise "". Be fair to both and never say which side is right.
