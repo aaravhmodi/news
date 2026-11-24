@@ -28,7 +28,7 @@ def gnews(query):
 TRUSTED = {"CBC", "CTV News", "Global News", "The Globe and Mail", "Toronto Star", "The Canadian Press",
            "Canadian Press", "National Post", "CityNews Toronto", "CP24", "Financial Post", "BNN Bloomberg",
            "Maclean's", "The Logic", "Reuters", "Bloomberg.com", "BBC", "The Guardian", "NPR",
-           "The Associated Press", "AP News"}
+           "The Associated Press", "AP News", "CNN"}
 
 # Order matters: a story in two feeds lands in the first section that has it.
 FEEDS = {
@@ -36,6 +36,7 @@ FEEDS = {
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-topstories"),
         ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
         ("NPR", "https://feeds.npr.org/1001/rss.xml"),
+        ("Google News", gnews("site:cnn.com when:1d")),  # CNN's own RSS feeds stopped updating
     ],
     "Young Canadians": [
         ("Google News", gnews('Canada (rent OR housing OR "first-time buyers" OR mortgage OR "cost of living" '
@@ -65,6 +66,7 @@ FEEDS = {
         ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/politics/"),
         ("Global News", "https://globalnews.ca/politics/feed/"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-canada"),
+        ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/canada/"),
     ],
     "Society & Debates": [  # gender, race, rights and ethics: the questions people argue about
         ("Google News", gnews('Canada (racism OR discrimination OR "assisted dying" OR abortion OR "free speech" '
@@ -90,6 +92,7 @@ FEEDS = {
     ],
     "World": [
         ("BBC", "https://feeds.bbci.co.uk/news/world/rss.xml"),
+        ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/world/"),
         ("NPR", "https://feeds.npr.org/1004/rss.xml"),
         ("The Guardian", "https://www.theguardian.com/world/rss"),
         ("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"),
@@ -97,6 +100,7 @@ FEEDS = {
     "Business": [
         ("BBC", "https://feeds.bbci.co.uk/news/business/rss.xml"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-business"),
+        ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/"),
         ("NPR", "https://feeds.npr.org/1006/rss.xml"),
     ],
     "Science & Health": [
@@ -115,6 +119,7 @@ SLOW_AGE = timedelta(days=5)  # debates move slower than news
 RUN_AT = 7  # daily refresh and push, Toronto hour
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")  # OpenAI's cheapest tier
 FOR_YOU = 8
+MOST = 12
 READER = ("a young Canadian: a university engineering student in Waterloo, Ontario who works in robotics "
           "and follows AI, tech, startups, Canadian and Indian politics and major world news. Cares most about "
           "what changes their life: rent and housing, jobs and internships, tuition and student loans, "
@@ -252,7 +257,7 @@ REGION = {**dict.fromkeys(["BBC", "The Guardian", "Reuters"], "UK"),
           **dict.fromkeys(["The Hindu", "Indian Express"], "India"), "Al Jazeera": "Middle East",
           **dict.fromkeys(["NPR", "Politico", "The Verge", "Wired", "TechCrunch", "Ars Technica", "IEEE Spectrum",
                            "MIT Technology Review", "Hacker News", "Bloomberg.com", "The Associated Press",
-                           "AP News"], "US")}
+                           "AP News", "CNN"], "US")}
 
 
 def add_coverage(items):
@@ -293,7 +298,9 @@ def rank(sections, now, per_topic=3):
         if len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic and i["section"] != "Sports":
             picks.append(i)
             per[i["section"]] = per.get(i["section"], 0) + 1
-    return {"For You": picks, **sections}
+    # Most Covered: the stories the most separate outlets are running, whatever the topic
+    most = sorted((i for i in pool if i.get("outlets", 1) >= 3), key=lambda i: i["outlets"], reverse=True)[:MOST]
+    return {"For You": picks, "Most Covered": most, **sections}
 
 
 def collect(now):
@@ -585,7 +592,7 @@ def render(sections, now, moves=(), note=""):
             continue
         lis = "".join(
             f'<li><article data-link="{e(i["link"])}" data-title="{e(i["title"])}" data-section="{e(i.get("section", cat))}">'
-            + (f'<p class="tag">{e(i["section"])}</p>' if cat == "For You" and i.get("section") else "")
+            + (f'<p class="tag">{e(i["section"])}</p>' if cat in ("For You", "Most Covered") and i.get("section") else "")
             + f'<h3><a href="{e(i["link"])}" target="_blank" rel="noopener">{e(i["title"])}</a></h3>'
             + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")

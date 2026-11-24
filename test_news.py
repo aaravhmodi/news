@@ -62,7 +62,8 @@ class T(unittest.TestCase):
              "debate": "", "side_a": "", "side_b": ""}]})  # unknown id ignored
         self.assertEqual((a["summary"], b["summary"], b["why"], b["world"]), ("feed a", "AI b", "rent", 10))
         out = rank(sections, now)
-        self.assertEqual(list(out), ["For You", "World", "Tech"])
+        self.assertEqual(list(out), ["For You", "Most Covered", "World", "Tech"])
+        self.assertEqual(out["Most Covered"], [])  # one outlet each: not widely covered
         self.assertEqual(out["For You"][0], b)  # the higher-scoring story leads
         page = render(out, now)
         self.assertIn("Why it matters to you:</b> rent", page)
@@ -120,6 +121,8 @@ class T(unittest.TestCase):
         out = rank({"Tech": [best], "Business": [other], "Canada": [alone]}, now)
         self.assertEqual(out["For You"], [best, alone])  # the weaker Nvidia angle is gone everywhere
         self.assertEqual(out["Business"], [])
+        wide = dict(alone, link="https://x/wide", title="Summit", thread="", outlets=5, section="World")
+        self.assertEqual(rank({"Canada": [alone], "World": [wide]}, now)["Most Covered"], [wide])
         self.assertIn('datetime="2026-11-24T12:00:00+00:00">Tue, Nov 24, 7:00 AM</time>', render(out, now))
 
     def test_votes_tune_you_score(self):

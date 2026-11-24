@@ -18,6 +18,12 @@ The top of the page shows the S&P/TSX, S&P 500, Nasdaq, oil, gold and the loonie
 last close (Yahoo Finance's keyless chart API, `MARKETS` in `news.py`). The AI adds one line on what moved them,
 only when a story in the day's brief explains it, and what it means for you.
 
+## Most Covered
+
+The stories carried by the most separate outlets in the day's scrape (3 or more, up to 12), whatever the
+topic: the clearest sign of what the whole news world thinks matters today. CNN comes in through a Google
+News `site:cnn.com` search because CNN's own RSS feeds stopped updating.
+
 ## Ongoing
 
 The AI names the storyline each story belongs to when it unfolds over weeks or months (trade talks, a war, a
