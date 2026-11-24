@@ -37,6 +37,7 @@ FEEDS = {
         ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
         ("NPR", "https://feeds.npr.org/1001/rss.xml"),
         ("Google News", gnews("site:cnn.com when:1d")),  # CNN's own RSS feeds stopped updating
+        ("Google News", gnews("site:apnews.com when:1d")),  # the wires have no public RSS
     ],
     "Young Canadians": [
         ("Google News", gnews('Canada (rent OR housing OR "first-time buyers" OR mortgage OR "cost of living" '
@@ -89,6 +90,7 @@ FEEDS = {
     "US Politics": [
         ("NPR", "https://feeds.npr.org/1014/rss.xml"),
         ("Politico", "https://rss.politico.com/politics-news.xml"),
+        ("Google News", gnews("site:apnews.com politics when:1d")),
     ],
     "World": [
         ("BBC", "https://feeds.bbci.co.uk/news/world/rss.xml"),
@@ -96,12 +98,14 @@ FEEDS = {
         ("NPR", "https://feeds.npr.org/1004/rss.xml"),
         ("The Guardian", "https://www.theguardian.com/world/rss"),
         ("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"),
+        ("Google News", gnews("site:reuters.com world when:1d")),
     ],
     "Business": [
         ("BBC", "https://feeds.bbci.co.uk/news/business/rss.xml"),
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-business"),
         ("The Globe and Mail", "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/"),
         ("NPR", "https://feeds.npr.org/1006/rss.xml"),
+        ("Google News", gnews("site:reuters.com business when:1d")),
     ],
     "Science & Health": [
         ("BBC", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
@@ -112,7 +116,13 @@ FEEDS = {
         ("CBC", "https://www.cbc.ca/webfeed/rss/rss-sports"),
         ("BBC", "https://feeds.bbci.co.uk/sport/rss.xml"),
     ],
+    "Culture": [
+        ("CBC", "https://www.cbc.ca/webfeed/rss/rss-arts"),
+        ("BBC", "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml"),
+        ("The Guardian", "https://www.theguardian.com/culture/rss"),
+    ],
 }
+SMALL_TALK = ("Sports", "Culture")  # in For You only when everyone is talking about it (buzz)
 PER_SECTION = 10
 MAX_AGE = timedelta(days=2)
 SLOW_AGE = timedelta(days=5)  # debates move slower than news
@@ -130,8 +140,30 @@ SITE = DATA / "site"
 SEEN = DATA / "seen.json"
 THREADS = DATA / "threads.json"  # ongoing storylines and their past-year timelines, kept between runs
 FEEDBACK = DATA / "feedback.json"  # the reader's Relevant / Not for me votes
+WEEK = DATA / "week.json"  # each run's best stories, for the This Week tab
 KEEP_THREADS = timedelta(days=14)
+KEEP_ARCHIVE = timedelta(days=60)
 FEEDBACK_LOCK = threading.Lock()
+# metered or subscriber-only: a free outlet on the same story gets the main link
+PAYWALLED = {"The Globe and Mail", "Bloomberg.com", "Financial Post", "The Logic", "National Post", "Toronto Star"}
+
+
+def load(path):
+    """A JSON file as a dict; {} if it is missing or unreadable, so one bad write can't stop every run."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except ValueError as e:
+        print(f"ignoring unreadable {path.name}: {e}", file=sys.stderr)
+        return {}
+
+
+def save(path, text):
+    """Write all or nothing: a crash mid-write leaves the old file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def local(tag):
@@ -213,6 +245,47 @@ def markets():
     return out
 
 
+def key_numbers():
+    """[(name, "2.50%", "Nov 23")]: the Bank of Canada rate, inflation and unemployment; a failing one is skipped."""
+    out = []
+    for name, series in (("BoC rate", "V39079"), ("Inflation", "STATIC_TOTALCPICHANGE")):
+        try:
+            [obs] = json.loads(fetch(f"https://www.bankofcanada.ca/valet/observations/{series}/json?recent=1"))["observations"]
+            when = datetime.fromisoformat(obs["d"])
+            out.append((name, f'{float(obs[series]["v"]):.2f}%' if series == "V39079" else f'{obs[series]["v"]}%',
+                        f"{when:%b} {when.day}" if series == "V39079" else f"{when:%b}"))
+        except Exception as e:
+            print(f"skip number {name}: {e}", file=sys.stderr)
+    try:  # Statistics Canada's Labour Force Survey: 2062815 all ages, 2062842 ages 15-24, seasonally adjusted
+        req = urllib.request.Request(
+            "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorsAndLatestNPeriods",
+            data=json.dumps([{"vectorId": v, "latestN": 1} for v in (2062815, 2062842)]).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (personal news brief)"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            for name, x in zip(("Unemployment", "Youth jobless"), json.load(r)):
+                [p] = x["object"]["vectorDataPoint"]
+                out.append((name, f'{p["value"]}%', f'{datetime.fromisoformat(p["refPer"]):%b}'))
+    except Exception as e:
+        print(f"skip number unemployment: {e}", file=sys.stderr)
+    return out
+
+
+TRENDS_NS = "{https://trends.google.com/trending/rss}"
+
+
+def trending():
+    """What Canadians are searching for now: [{term, traffic, title, link, source}], from Google Trends."""
+    out = []
+    for el in ET.fromstring(fetch("https://trends.google.com/trending/rss?geo=CA")).iter("item"):
+        news_item = el.find(TRENDS_NS + "news_item")
+        get = lambda e, tag: html.unescape((e.findtext(TRENDS_NS + tag) or "").strip()) if e is not None else ""
+        link = get(news_item, "news_item_url")
+        out.append({"term": (el.findtext("title") or "").strip(), "traffic": get(el, "approx_traffic"),
+                    "title": get(news_item, "news_item_title"), "source": get(news_item, "news_item_source"),
+                    "link": link if link.startswith(("https://", "http://")) else ""})
+    return [t for t in out if t["term"]][:20]
+
+
 def price(name, value):
     """Indexes are points, oil and gold are US dollars, the loonie is in US dollars."""
     return f"US${value:.3f}" if name == "Loonie" else f"US${value:,.2f}" if name in ("Oil", "Gold") else f"{value:,.0f}"
@@ -281,27 +354,50 @@ def score(i, now):
              else 0.5 * coverage + 0.5 * spread)
     you = min(10, max(0, i.get("you", 0) + (2 if WATCH.search(f'{i["title"]} {i["summary"]}') else 0)
                       + i.get("pref", 0)))
-    fresh = 0.5 ** ((now - i["when"]).total_seconds() / 3600 / 36)  # halves every 36h
+    fresh = 0.5 ** (max(0, (now - i["when"]).total_seconds()) / 3600 / 36)  # halves every 36h; a future date is new
     i["world_score"], i["you_score"] = round(world), round(you)
     news_first = 0.85 if OPINION.search(i["title"]) else 1  # a report beats a column on the same story
     return (0.5 * world + 0.5 * you) * (0.6 + 0.4 * fresh) * news_first
 
 
+def stories(sections):
+    """Every story once: a tile can sit in several sections."""
+    return list({id(i): i for items in sections.values() for i in items}.values())
+
+
+def event(i):
+    return (i.get("event") or i["link"]).lower()
+
+
+def free_first(tile):
+    """A paywalled tile links to a free outlet's version when one is in its Also at list."""
+    free = next((a for a in tile.get("also", []) if a["source"] not in PAYWALLED), None)
+    if tile["source"] in PAYWALLED and free:
+        tile["also"].remove(free)
+        tile["also"].insert(0, {"source": tile["source"], "link": tile["link"]})
+        tile["source"], tile["link"] = free["source"], free["link"]
+
+
 def rank(sections, now, per_topic=3):
     """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'.
-    One tile per storyline: other angles on the same event stay on the Ongoing tab."""
-    pool = sorted((i for items in sections.values() for i in items), key=lambda i: score(i, now), reverse=True)
+    One tile per event: other angles on it become links on the best tile, which every section that had
+    the event shows. Different events in one storyline keep their own tiles."""
+    pool = sorted(stories(sections), key=lambda i: score(i, now), reverse=True)
     best = {}
     for i in pool:
-        b = best.setdefault(i.get("thread") or i["link"], i)
+        b = best.setdefault(event(i), i)
         if b is not i:  # another angle on the same event: its outlet becomes an extra link
             also(b, i)
-    pool = [i for i in pool if best[i.get("thread") or i["link"]] is i]
+    pool = [i for i in pool if best[event(i)] is i]
+    for i in pool:
+        free_first(i)
     for cat, items in sections.items():  # pool order is score order; collect() over-fetched for this trim
-        sections[cat] = [i for i in pool if i in items][:PER_SECTION]
+        has = {event(i) for i in items}
+        sections[cat] = [i for i in pool if event(i) in has][:PER_SECTION]
     picks, per = [], {}
     for i in pool:
-        if len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic and i["section"] != "Sports":
+        if (len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic
+                and (i["section"] not in SMALL_TALK or i.get("buzz", 0) >= 7)):
             picks.append(i)
             per[i["section"]] = per.get(i["section"], 0) + 1
     # Most Covered: the stories the most separate outlets are running, whatever the topic
@@ -335,6 +431,8 @@ def collect(now):
             twin = next((tile for w, tile in shown if same_story(i["words"], w)), None)
             if twin:  # the same story from another outlet becomes an extra link on the first tile
                 also(twin, i)
+                if len(picked) < PER_SECTION + 4 and all(t is not twin for t in picked):
+                    picked.append(twin)  # a tile from an earlier section: this tab keeps its own top stories
             elif len(picked) < PER_SECTION + 4:  # spares: rank() merges same-storyline tiles, then trims
                 tile = dict(i, section=cat)
                 shown.append((i["words"], tile))
@@ -393,13 +491,23 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      storyline, at most 5 words, e.g. "Canada-US trade talks". Reuse a name from the THREADS line exactly
      when it is the same storyline, and give every story about it the same name. Stories that cover the
      same event from different angles (reaction, markets, analysis) always share a name. Otherwise "".
+   - event: the single event or announcement the story reports, at most 6 words, e.g. "Nvidia reinstates
+     Jensen Huang". Stories about the same event from any angle (reaction, markets, analysis, another
+     outlet) use exactly the same text; a new development in the same storyline is a different event.
+   - buzz (0-10): how likely people around this reader (classmates, coworkers, friends in Canada) bring
+     it up in conversation this week. 0-2 almost nobody; 5 some people; 8 most people; 10 everyone
+     (a Canadian team in a final, a huge celebrity death, a viral moment).
    What happened comes only from the given text. Context, effects and motives may use well-established
    background knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
 2. markets: if a MARKETS line is given, at most 35 words for this reader: what the biggest moves were,
    what moved them if a story in the list explains it (say which), and what it means for them
    (savings, tuition costs, prices, jobs, the loonie). If no story explains a move, do not guess why.
    If there is no MARKETS line, "".
-3. threads: for every thread name you used: name; status, where it stands now and what to watch next, at
+3. tldr: the 5 things this reader would be embarrassed not to know if they came up in conversation today,
+   most important first, one plain sentence each (at most 25 words), from the stories given. Include a
+   sports, culture or trending moment only if most people are talking about it. A TRENDING line, if given,
+   lists what Canadians are searching for right now.
+4. threads: for every thread name you used: name; status, where it stands now and what to watch next, at
    most 35 words, from the given text; query, 2-4 broad search words for the whole storyline, not today's detail
    ("Russia Ukraine war", not "Ukraine drones Russian ships Libya").
 LIKED and DISLIKED lines are headlines the reader marked relevant or not for them: rate "you" for
@@ -409,33 +517,35 @@ The reader: {READER}"""
 BRIEF_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["stories", "markets", "threads"],
+    "required": ["stories", "markets", "tldr", "threads"],
     "properties": {
         "markets": {"type": "string"},
+        "tldr": {"type": "array", "items": {"type": "string"}},
         "threads": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["name", "status", "query"],
             "properties": {"name": {"type": "string"}, "status": {"type": "string"}, "query": {"type": "string"}},
         }},
         "stories": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
-                                                                  "you", "debate", "side_a", "side_b", "thread"],
+                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "buzz"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
                            "reach": {"type": "integer"}, "ripple": {"type": "integer"},
                            "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "motive": {"type": "string"},
                            "you": {"type": "integer"},
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"},
-                           "thread": {"type": "string"}},
+                           "thread": {"type": "string"}, "event": {"type": "string"},
+                           "buzz": {"type": "integer"}},
         }},
     },
 }
 
 
-def ask_openai(items, moves=(), known=(), liked=(), disliked=()):
+def ask_openai(items, moves=(), known=(), liked=(), disliked=(), trends=()):
     """One cheap call for the whole day's stories. Returns the parsed JSON brief."""
     lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:160]}' for n, i in enumerate(items))
     if moves:
         lines += "\nMARKETS|" + "|".join(f"{n} {price(n, v)} {c:+.1f}%" for n, v, c in moves)
-    for label, values in (("THREADS", known), ("LIKED", liked), ("DISLIKED", disliked)):
+    for label, values in (("THREADS", known), ("LIKED", liked), ("DISLIKED", disliked), ("TRENDING", trends)):
         if values:
             lines += f"\n{label}|" + "|".join(values)
     body = {
@@ -455,6 +565,8 @@ def ask_openai(items, moves=(), known=(), liked=(), disliked=()):
         data = json.load(r)
     print("openai usage:", data.get("usage", {}).get("input_tokens"), "in,",
           data.get("usage", {}).get("output_tokens"), "out", flush=True)
+    if data.get("status") == "incomplete":  # hit max_output_tokens: the JSON is cut off, so say so plainly
+        raise RuntimeError(f"openai reply cut off: {data.get('incomplete_details')}")
     text = "".join(c["text"] for o in data["output"] if o["type"] == "message"
                    for c in o["content"] if c["type"] == "output_text")
     try:  # start at the first brace (skips an empty part or a code fence) and ignore anything after the JSON
@@ -466,27 +578,31 @@ def ask_openai(items, moves=(), known=(), liked=(), disliked=()):
 
 def apply_brief(sections, brief):
     """Copy the AI summary, reason and 0-10 ratings onto each story (ids are positions in sections)."""
-    items = [i for its in sections.values() for i in its]
+    items = stories(sections)
     for s in brief["stories"]:
         if 0 <= s["id"] < len(items):
             i = items[s["id"]]
             if s["summary"].strip():
+                i["ai_background"] = not i["summary"]  # the feed gave only a headline: context is the AI's
                 i["summary"] = s["summary"].strip()
             i["why"] = s["why"].strip()
             reach, ripple, lasting, i["you"] = (max(0, min(10, s[k])) for k in ("reach", "ripple", "lasting", "you"))
             i["world"] = 0.3 * reach + 0.45 * ripple + 0.25 * lasting  # knock-on effects weigh most
             i["knock_on"], i["motive"] = (s.get(k, "").strip().replace("->", "→") for k in ("knock_on", "motive"))
-            i["thread"] = s.get("thread", "").strip()
+            i["thread"], i["event"] = s.get("thread", "").strip(), s.get("event", "").strip()
+            i["buzz"] = max(0, min(10, s.get("buzz", 0)))
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 
 
-def prefs(feedback):
-    """Net Relevant minus Not for me votes per topic, capped at +/-4: added to the You score."""
+def prefs(feedback, now):
+    """Net Relevant minus Not for me votes per topic over the last 30 days, halved and capped at +/-4: added to
+    the You score. Halved so one vote doesn't move a whole topic; the AI also sees the voted headlines."""
     net = {}
     for v in feedback.values():
-        net[v["section"]] = net.get(v["section"], 0) + v["vote"]
-    return {k: max(-4, min(4, n)) for k, n in net.items()}
+        if now - datetime.fromisoformat(v["when"]) < timedelta(days=30):
+            net[v["section"]] = net.get(v["section"], 0) + v["vote"]
+    return {k: max(-4, min(4, int(n / 2))) for k, n in net.items()}
 
 
 def track(sections, threads, store, now):
@@ -556,26 +672,44 @@ def notify(sections, seen, now):
     count = len({i["link"] for items in new.values() for i in items})
     if not count:
         return []
-    picks = sections.get("For You") or [items[0] for items in new.values() if items]
+    # only stories not pushed before: the For You picks, else the newest story per section
+    picks = ([i for i in sections.get("For You", []) if i["link"] not in seen]
+             or list({items[0]["link"]: items[0] for items in new.values() if items}.values()))
     # each headline with its one-line summary underneath; expand the notification to read them
     body = "\n\n".join(f"• {i['title']}" + (f"\n{i['summary']}" if i.get("summary") else "") for i in picks)
     body = body.encode()[:4000].decode(errors="ignore")  # ntfy turns longer messages into attachments
     site = os.environ.get("SITE_URL", "")
     actions = [{"action": "view", "label": "Open brief", "url": site}] if site else []
     actions.append({"action": "view", "label": "Top story", "url": picks[0]["link"]})
-    topic = os.environ.get("NTFY_TOPIC")
-    if topic:
-        req = urllib.request.Request(
-            f"https://ntfy.sh/{topic}",
-            data=body.encode(),
-            # headers must be latin-1, so headlines go in the body; json.dumps escapes to ASCII
-            headers={"Title": f"{count} new stories", "Click": site, "Tags": "newspaper",
-                     "Actions": json.dumps(actions)},
-        )
-        urllib.request.urlopen(req, timeout=20).close()
-    else:
-        print(f"(no NTFY_TOPIC) {count} new stories\n{body}")
+    # headers must be latin-1, so headlines go in the body; json.dumps escapes to ASCII
+    push(f"{len(picks)} new top stories", body, Click=site, Tags="newspaper", Actions=json.dumps(actions))
     return [i["link"] for items in new.values() for i in items]
+
+
+def push(title, body, **headers):
+    """One ntfy message to NTFY_TOPIC (printed instead when it isn't set)."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        print(f"(no NTFY_TOPIC) {title}\n{body}")
+        return
+    req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=body.encode(), headers={"Title": title, **headers})
+    urllib.request.urlopen(req, timeout=20).close()
+
+
+def this_week(log, pool, now, top=30, show=10):
+    """Add this run's top rated stories to log (kept 7 days) and return the week's best, one per event."""
+    rated = sorted((i for i in pool if "world" in i), key=lambda i: score(i, now), reverse=True)[:top]
+    for i in rated:
+        log[i["link"]] = {**{k: v for k, v in i.items() if k not in ("words", "pref")},
+                          "when": i["when"].isoformat(), "logged": now.isoformat()}
+    for k in [k for k, v in log.items() if now - datetime.fromisoformat(v["logged"]) > timedelta(days=7)]:
+        del log[k]
+    picks = []
+    for i in sorted(log.values(), key=lambda i: i["world_score"] + i["you_score"], reverse=True):
+        w = words(i["title"])
+        if len(picks) < show and not any(event(i) == event(p) or same_story(w, words(p["title"])) for p in picks):
+            picks.append(i)
+    return [dict(i, when=datetime.fromisoformat(i["when"])) for i in picks]
 
 
 def thread_tile(name, status, recent, year):
@@ -595,12 +729,14 @@ def thread_tile(name, status, recent, year):
             + '</article></li>')
 
 
-def render(sections, now, moves=(), note=""):
+def render(sections, now, moves=(), note="", numbers=(), tldr=(), warn=""):
     e = html.escape
-    strip = ('<section class="markets" aria-label="Markets"><ul>' + "".join(
+    strip = ('<section class="markets" aria-label="Markets and key numbers"><ul>' + "".join(
         f'<li><span>{e(n)}</span> <b>{price(n, v)}</b> <span class="{"up" if c >= 0 else "down"}">'
         f'<span aria-hidden="true">{"&#9650;" if c >= 0 else "&#9660;"}</span> {c:+.1f}%</span></li>' for n, v, c in moves)
-        + '</ul>' + (f'<p>{e(note)}</p>' if note else "") + '</section>') if moves else ""
+        + "".join(f'<li><span>{e(n)}</span> <b>{e(v)}</b> <span class="asof">{e(when)}</span></li>'
+                  for n, v, when in numbers)
+        + '</ul>' + (f'<p>{e(note)}</p>' if note else "") + '</section>') if moves or numbers else ""
     nav = "".join(
         f'<a id="tab-s{n}" href="#s{n}">{e(c)}</a>'
         for n, c in enumerate(sections)
@@ -614,11 +750,26 @@ def render(sections, now, moves=(), note=""):
                    '<p class="empty">No ongoing storylines in today\'s news.</p>')
                 + '</section>')
             continue
+        if cat == "Trending":
+            rows = "".join(
+                f'<li><p class="term">{e(t["term"])}'
+                + (f' <span class="traffic">{e(t["traffic"])} searches</span>' if t["traffic"] else "") + '</p>'
+                + (f'<a href="{e(t["link"])}" target="_blank" rel="noopener">{e(t["title"])}</a>'
+                   f' <span class="src">{e(t["source"])}</span>' if t["link"] and t["title"] else "")
+                + '</li>' for t in items)
+            parts.append(
+                f'<section id="s{n}" aria-labelledby="heading-s{n}"><h2 id="heading-s{n}">Trending in Canada</h2>'
+                + (f'<ol class="trending">{rows}</ol>' if items else '<p class="empty">Trends are unavailable right now.</p>')
+                + '</section>')
+            continue
         lis = "".join(
             f'<li><article data-link="{e(i["link"])}" data-title="{e(i["title"])}" data-section="{e(i.get("section", cat))}">'
-            + (f'<p class="tag">{e(i["section"])}</p>' if cat in ("For You", "Most Covered") and i.get("section") else "")
+            + (f'<p class="tag">{e(i["section"])}</p>' if cat in ("For You", "Most Covered", "This Week") and i.get("section") else "")
             + f'<h3><a href="{e(i["link"])}" target="_blank" rel="noopener">{e(i["title"])}</a></h3>'
-            + (f'<p class="summary">{e(i["summary"])}</p>' if i.get("summary") else "")
+            + (f'<p class="summary">'
+               + ('<span class="ai" title="The outlet gave only a headline; this context is the AI\'s own background">'
+                  'AI background</span> ' if i.get("ai_background") else "")
+               + f'{e(i["summary"])}</p>' if i.get("summary") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
                '<p><b>The other side:</b> {}</p></div>'.format(*map(e, i["debate"])) if i.get("debate") else "")
@@ -642,6 +793,9 @@ def render(sections, now, moves=(), note=""):
             for i in items
         )
         content = f'<ol>{lis}</ol>' if items else '<p class="empty">No recent stories in this section. Check back after the next update.</p>'
+        if cat == "For You" and tldr:
+            content = ('<div class="tldr"><h3>Today in 5</h3><ul>' + "".join(f"<li>{e(t)}</li>" for t in tldr)
+                       + '</ul></div>' + content)
         parts.append(
             f'<section id="s{n}" aria-labelledby="heading-s{n}">'
             f'<h2 id="heading-s{n}">{e(cat)}</h2>{content}</section>'
@@ -649,48 +803,65 @@ def render(sections, now, moves=(), note=""):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     t = now.astimezone(ZoneInfo("America/Toronto"))
     stamp = f"{t:%a, %b} {t.day}, {t.hour % 12 or 12}:{t:%M %p}"  # e.g. Tue, Nov 24, 7:00 AM (Windows has no %-d)
-    return (page.replace("%UPDATED_TEXT%", stamp).replace("%UPDATED%", now.isoformat()).replace("%MARKETS%", strip).replace("%NAV%", nav)
+    return (page.replace("%WARN%", f'<p class="warn" role="status">{e(warn)}</p>' if warn else "")
+            .replace("%UPDATED_TEXT%", stamp).replace("%UPDATED%", now.isoformat()).replace("%MARKETS%", strip).replace("%NAV%", nav)
             .replace("%SECTIONS%", "".join(parts)))
 
 
-def run(push=True):
+def run(notify_phone=True):
     now = datetime.now(timezone.utc)
-    seen = json.loads(SEEN.read_text()) if SEEN.exists() else {}
-    store = json.loads(THREADS.read_text()) if THREADS.exists() else {}
-    feedback = json.loads(FEEDBACK.read_text()) if FEEDBACK.exists() else {}
+    seen, store, feedback, log = load(SEEN), load(THREADS), load(FEEDBACK), load(WEEK)
     sections = collect(now)
     if not any(sections.values()):  # offline: keep yesterday's page and retry later
         raise RuntimeError("no feed could be read")
-    moves, note, threads = markets(), "", []
+    moves, numbers, note, threads, tldr, warn = markets(), key_numbers(), "", [], [], ""
+    try:
+        trends = trending()
+    except Exception as e:  # the Trending tab says it's unavailable
+        print(f"skip trends: {e}", file=sys.stderr)
+        trends = []
     votes = sorted(feedback.values(), key=lambda v: v["when"])
     liked, disliked = ([v["title"] for v in votes if v["vote"] == d][-15:] for d in (1, -1))
     if os.environ.get("OPENAI_API_KEY"):
         for attempt in (1, 2):  # an odd reply now and then is not JSON; one retry fixes it
             try:
-                brief = ask_openai([i for its in sections.values() for i in its], moves,
-                                   list(store.get("status", {})), liked, disliked)
+                brief = ask_openai(stories(sections), moves, list(store.get("status", {})), liked, disliked,
+                                   [t["term"] for t in trends])
                 apply_brief(sections, brief)
                 note, threads = brief.get("markets", "").strip(), brief.get("threads", [])
+                tldr = [t.strip() for t in brief.get("tldr", []) if t.strip()][:5]
                 break
             except Exception as e:  # coverage-only scores and the feeds' summaries are a fine fallback
                 print(f"openai failed (try {attempt}), using feed summaries: {e}", file=sys.stderr, flush=True)
-    pref = prefs(feedback)
-    for i in (i for its in sections.values() for i in its):
+        else:
+            warn = "AI summaries are unavailable this run, so stories show the outlets' own descriptions."
+    pref = prefs(feedback, now)
+    for i in stories(sections):
         i["pref"] = pref.get(i["section"], 0)
     sections = rank(sections, now)
-    if push:
+    if notify_phone:
         try:
             for link in notify(sections, seen, now):
                 seen[link] = now.isoformat()
         except OSError as e:  # unsent stories stay unseen, so the next run pushes them
             print(f"push failed: {e}", file=sys.stderr)
-    for_you = sections.pop("For You")
-    sections = {"For You": for_you, "Ongoing": ongoing(store, track(sections, threads, store, now), now), **sections}
+    week = this_week(log, stories(sections), now)
+    for_you, most = sections.pop("For You"), sections.pop("Most Covered")
+    sections = {"For You": for_you, "Trending": trends,
+                "Ongoing": ongoing(store, track(sections, threads, store, now), now),
+                "Most Covered": most, "This Week": week, **sections}
     seen = {k: v for k, v in seen.items() if now - datetime.fromisoformat(v) < timedelta(days=7)}
-    SITE.mkdir(parents=True, exist_ok=True)
-    SEEN.write_text(json.dumps(seen, indent=0))
-    THREADS.write_text(json.dumps(store, indent=0))
-    (SITE / "index.html").write_text(render(sections, now, moves, note), encoding="utf-8")
+    archive = SITE / "archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    save(SEEN, json.dumps(seen, indent=0))
+    save(THREADS, json.dumps(store, indent=0))
+    save(WEEK, json.dumps(log, indent=0))
+    page = render(sections, now, moves, note, numbers, tldr, warn)
+    save(SITE / "index.html", page)
+    save(archive / f"{now.astimezone(ZoneInfo('America/Toronto')):%Y-%m-%d-%H%M}.html", page)
+    for old in archive.glob("*.html"):  # browse past briefs at /archive/
+        if now.timestamp() - old.stat().st_mtime > KEEP_ARCHIVE.total_seconds():
+            old.unlink()
     print(now.isoformat(), {c: len(i) for c, i in sections.items()}, flush=True)
 
 
@@ -717,13 +888,13 @@ class Handler(SimpleHTTPRequestHandler):
 
 def record_vote(link, title, section, vote, now=None):
     with FEEDBACK_LOCK:
-        fb = json.loads(FEEDBACK.read_text()) if FEEDBACK.exists() else {}
+        fb = load(FEEDBACK)
         fb.pop(link, None)
         if vote:
             fb[link] = {"title": title, "section": section, "vote": vote,
                         "when": (now or datetime.now(timezone.utc)).isoformat()}
         fb = dict(sorted(fb.items(), key=lambda kv: kv[1]["when"])[-500:])  # the newest 500 votes
-        FEEDBACK.write_text(json.dumps(fb, indent=0))
+        save(FEEDBACK, json.dumps(fb, indent=0))
 
 
 def last_due(now):
@@ -739,6 +910,7 @@ def serve(port=8097):
     handler = partial(Handler, directory=SITE)
     threading.Thread(target=ThreadingHTTPServer(("", port), handler).serve_forever, daemon=True).start()
     toronto, page = ZoneInfo("America/Toronto"), SITE / "index.html"
+    alerted = None  # the slot already alerted about, so a failing slot pushes once, not every 15 minutes
     while True:
         now = datetime.now(toronto)
         due = last_due(now)
@@ -748,6 +920,12 @@ def serve(port=8097):
                 run()
             except Exception as e:  # keep serving; retried on the next check
                 print(f"run failed: {e}", file=sys.stderr, flush=True)
+                if alerted != due:
+                    alerted = due
+                    try:
+                        push("News brief failed", f"The brief could not refresh: {e}"[:1000], Tags="warning")
+                    except OSError as err:
+                        print(f"alert failed: {err}", file=sys.stderr, flush=True)
         time.sleep(15 * 60)
 
 

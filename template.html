@@ -38,6 +38,16 @@
   .markets li span:first-child { color: var(--muted); }
   .markets .up { color: #1e7a3c; } .markets .down { color: var(--accent); }
   .markets p { margin: .45rem .2rem 0; color: #3a3a3a; }
+  .markets .asof { color: var(--muted); font-size: .72rem; }
+  .warn { max-width: 60rem; margin: 0 auto .75rem; padding: .55rem 1.25rem; background: #fff4d6; color: #5c4400; font-size: .85rem; }
+  .tldr { margin: .5rem 0 0; padding: .8rem 1.1rem; background: var(--tile); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 10px; }
+  .tldr h3 { font-size: .8rem; color: var(--accent); letter-spacing: .06em; text-transform: uppercase; }
+  .tldr ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+  .tldr li { padding: .15rem 0; background: none; border: 0; border-radius: 0; font-size: .95rem; }
+  .trending .term { margin: 0; font-weight: 700; }
+  .trending .traffic, .trending .src { color: var(--muted); font-size: .8rem; font-weight: 400; }
+  .trending a { font-size: .9rem; }
+  .ai { padding: .05rem .35rem; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
   .topic-nav { position: sticky; top: 0; z-index: 2; background: var(--paper); border-bottom: 1px solid var(--rule); }
   .topics { display: flex; overflow-x: auto; padding: 0 .75rem; scrollbar-width: none; }
   .topics::-webkit-scrollbar { display: none; }
@@ -84,12 +94,13 @@
   <h1>The Brief</h1>
   <p class="updated">Updated <time class="stamp" datetime="%UPDATED%">%UPDATED_TEXT%</time><span class="ago"></span></p>
 </header>
+%WARN%
 %MARKETS%
 <nav class="topic-nav" aria-label="News topics"><div class="topics">%NAV%</div></nav>
 <main id="main" tabindex="-1">
 %SECTIONS%
 </main>
-<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year (big stories show <b>How it spreads</b> to markets and prices, and <b>Why they did it</b>), blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. Tap <b>Relevant</b> or <b>Not for me</b> on any story: your votes tune which topics and stories rank higher from the next update. <b>Most Covered</b> lists the stories the most separate outlets are running. <b>Ongoing</b> follows storylines in today's news with a headline a month from the past year. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind.</footer>
+<footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year (big stories show <b>How it spreads</b> to markets and prices, and <b>Why they did it</b>), blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. Tap <b>Relevant</b> or <b>Not for me</b> on any story: your votes tune which topics and stories rank higher from the next update. <b>Most Covered</b> lists the stories the most separate outlets are running. <b>Ongoing</b> follows storylines in today's news with a headline a month from the past year. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind. Summaries are written by AI from each outlet's description; <b>AI background</b> marks stories where the outlet gave only a headline, so the context is the AI's general knowledge, not reporting. <b>Trending</b> is what Canadians are searching for on Google right now, and <b>This Week</b> is the week's biggest stories if you missed a few days. <a href="/archive/">Past briefs</a></footer>
 <script>
   // Enhance ordinary fragment links only after all sections are available.
   (() => {
@@ -172,7 +183,7 @@
     tiles.forEach(tile => tile.querySelectorAll('.vote button').forEach(button => button.addEventListener('click', async () => {
       const link = tile.dataset.link;
       const vote = votes[link] === Number(button.dataset.vote) ? 0 : Number(button.dataset.vote);  // tap again to undo
-      const res = await fetch('feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await fetch('/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ link, title: tile.dataset.title, section: tile.dataset.section, vote }) }).catch(() => null);
       if (!res || !res.ok) return;
       if (vote) votes[link] = vote; else delete votes[link];

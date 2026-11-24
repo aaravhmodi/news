@@ -111,19 +111,26 @@ class T(unittest.TestCase):
         os.environ.pop("NTFY_TOPIC", None)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(notify({"For You": [a], "Canada": [a]}, {}, now), ["https://x/a", "https://x/a"])
-        self.assertIn("1 new stories\n• Rents fall\nOntario rents dropped 3%.", out.getvalue())
+        self.assertIn("1 new top stories\n• Rents fall\nOntario rents dropped 3%.", out.getvalue())
+        b = dict(a, title="Jobs up", link="https://x/b")
+        with contextlib.redirect_stdout(io.StringIO()) as out:  # a: pushed last time, so only b is listed
+            notify({"For You": [a], "Canada": [b]}, {"https://x/a": now.isoformat()}, now)
+        self.assertIn("1 new top stories\n• Jobs up", out.getvalue())
+        self.assertNotIn("Rents fall", out.getvalue())
         self.assertIn('target="_blank" rel="noopener"', render({"Canada": [dict(a, source="CBC", when=now)]}, now))
 
-    def test_one_tile_per_storyline_and_dated_stamp(self):
+    def test_one_tile_per_event_and_dated_stamp(self):
         now = datetime(2026, 11, 24, 12, tzinfo=timezone.utc)  # 7:00 AM in Toronto
-        mk = lambda t, sec, th, you: {"title": t, "summary": "", "link": "https://x/" + t, "source": "BBC",
-                                      "when": now, "section": sec, "outlets": 1, "world": 5, "you": you,
-                                      "thread": th}
-        best, other, alone = mk("Huang back", "Tech", "Nvidia CEO", 9), mk("Shares soar", "Business", "Nvidia CEO", 5), \
-            mk("Rents fall", "Canada", "", 4)
-        out = rank({"Tech": [best], "Business": [other], "Canada": [alone]}, now)
-        self.assertEqual(out["For You"], [best, alone])  # the weaker Nvidia angle is gone everywhere
-        self.assertEqual(out["Business"], [])
+        mk = lambda t, sec, ev, you, src="BBC": {
+            "title": t, "summary": "", "link": "https://x/" + t, "source": src, "when": now, "section": sec,
+            "outlets": 1, "world": 5, "you": you, "thread": "Nvidia leadership" if ev else "", "event": ev}
+        best, other, alone = mk("Huang back", "Tech", "Huang reinstated", 9), \
+            mk("Shares soar", "Business", "Huang Reinstated", 5, "CNN"), mk("Rents fall", "Canada", "", 4)
+        later = mk("Nvidia names new CFO", "Tech", "Nvidia CFO named", 3)  # same storyline, new event
+        out = rank({"Tech": [best, later], "Business": [other], "Canada": [alone]}, now)
+        self.assertEqual(out["For You"], [best, alone, later])  # the weaker Huang angle is gone
+        self.assertEqual(out["Business"], [best])  # but its tab still shows the event, on the best tile
+        self.assertEqual(best["also"], [{"source": "CNN", "link": "https://x/Shares soar"}])
         wide = dict(alone, link="https://x/wide", title="Summit", thread="", outlets=5, section="World")
         self.assertEqual(rank({"Canada": [alone], "World": [wide]}, now)["Most Covered"], [wide])
         self.assertIn('datetime="2026-11-24T12:00:00+00:00">Tue, Nov 24, 7:00 AM</time>', render(out, now))
@@ -156,9 +163,13 @@ class T(unittest.TestCase):
 
     def test_votes_tune_you_score(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
-        fb = {f"https://x/{n}": {"section": "Sports", "vote": -1} for n in range(6)}
-        fb["https://x/w"] = {"section": "World", "vote": 1}
-        self.assertEqual(prefs(fb), {"Sports": -4, "World": 1})  # capped at -4
+        vote = lambda sec, v, days=1: {"section": sec, "vote": v, "when": (now - timedelta(days=days)).isoformat()}
+        fb = {f"https://x/{n}": vote("Sports", -1) for n in range(10)}
+        fb["https://x/w"] = vote("World", 1)
+        fb.update({f"https://x/t{n}": vote("Tech", 1) for n in range(3)})
+        fb.update({f"https://x/o{n}": vote("AI", -1, days=40) for n in range(4)})  # over 30 days: ignored
+        # halved, so one vote moves nothing; capped at -4
+        self.assertEqual(prefs(fb, now), {"Sports": -4, "World": 0, "Tech": 1})
         i = {"title": "Leafs win", "summary": "", "when": now, "outlets": 1, "world": 2, "you": 3, "pref": -4}
         score(i, now)
         self.assertEqual(i["you_score"], 0)  # never below 0
@@ -205,6 +216,73 @@ class T(unittest.TestCase):
         self.assertIn('<time class="month" datetime="2026-03-04T00:00:00+00:00">Mar 2026</time>', page)
         self.assertIn(">Talks resume</a>", page)
         self.assertEqual(news.keys("Nvidia reinstated"), news.keys("NVIDIA reinstatement"))  # stems match
+
+    def test_twin_shows_in_both_tabs_and_ai_sees_it_once(self):
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        mk = lambda t, src: {"title": t, "summary": "", "source": src, "when": now, "link": f"https://{src}/{t}"}
+        feeds = {"Top Stories": [mk("Carney announces new tariffs on US steel imports", "CBC")],
+                 "Canada": [mk("Carney unveils tariffs on American steel imports", "CTV News"),
+                            mk("Ontario rent freeze extended", "CBC")]}
+        with mock.patch.dict(news.FEEDS, {k: [(k, "u")] for k in feeds}, clear=True), \
+                mock.patch.object(news, "fetch", side_effect=lambda u: u), \
+                mock.patch.object(news, "parse", side_effect=lambda u, src: feeds[src]):
+            out = news.collect(now)
+        [tile] = out["Top Stories"]
+        self.assertIs(out["Canada"][0], tile)  # the Canada tab keeps its top story
+        self.assertEqual(len(news.stories(out)), 2)  # sent to the AI once
+        news.apply_brief(out, {"stories": [
+            {"id": 0, "summary": "Steel tariffs.", "why": "", "reach": 5, "ripple": 5, "lasting": 5, "knock_on": "",
+             "motive": "", "you": 5, "debate": "", "side_a": "", "side_b": "", "thread": "", "event": "", "buzz": 2}]})
+        self.assertTrue(tile["ai_background"])  # the feed had no description
+        self.assertIn("AI background</span> Steel tariffs.", render(out, now))
+
+    def test_paywalled_tile_links_free_outlet(self):
+        tile = {"source": "The Globe and Mail", "link": "https://g/a",
+                "also": [{"source": "Financial Post", "link": "https://fp/a"}, {"source": "CBC", "link": "https://c/a"}]}
+        news.free_first(tile)
+        self.assertEqual((tile["source"], tile["link"]), ("CBC", "https://c/a"))
+        self.assertEqual([a["source"] for a in tile["also"]], ["The Globe and Mail", "Financial Post"])
+
+    def test_trending_and_key_numbers(self):
+        xml = (b'<rss xmlns:ht="https://trends.google.com/trending/rss"><channel><item><title>microsoft code red</title>'
+               b'<ht:approx_traffic>200+</ht:approx_traffic><ht:news_item>'
+               b'<ht:news_item_title>Microsoft declares &apos;Code Red&apos;</ht:news_item_title>'
+               b'<ht:news_item_url>https://www.reuters.com/a</ht:news_item_url>'
+               b'<ht:news_item_source>Reuters</ht:news_item_source></ht:news_item></item></channel></rss>')
+        with mock.patch.object(news, "fetch", return_value=xml):
+            [t] = news.trending()
+        self.assertEqual(t, {"term": "microsoft code red", "traffic": "200+", "title": "Microsoft declares 'Code Red'",
+                             "source": "Reuters", "link": "https://www.reuters.com/a"})
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        page = render({"For You": [], "Trending": [t]}, now, numbers=[("BoC rate", "2.50%", "Nov 23")],
+                      tldr=["Microsoft is down."], warn="AI summaries are unavailable")
+        self.assertIn('<b>2.50%</b> <span class="asof">Nov 23</span>', page)
+        self.assertIn("200+ searches", page)
+        self.assertIn("<h3>Today in 5</h3><ul><li>Microsoft is down.</li>", page)
+        self.assertIn('<p class="warn" role="status">AI summaries are unavailable</p>', page)
+        self.assertNotIn("%WARN%", render({"World": []}, now))
+
+    def test_this_week_one_per_event(self):
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        mk = lambda t, ev, w: {"title": t, "summary": "", "link": "https://x/" + t, "source": "CBC", "section": "World",
+                               "when": now, "outlets": 1, "world": w, "you": 0, "event": ev, "words": []}
+        log = {"https://x/old": dict(mk("Old", "", 9), when=now.isoformat(), logged="2026-11-10T00:00:00+00:00",
+                                      world_score=9, you_score=9)}  # past 7 days: dropped
+        week = news.this_week(log, [mk("Summit opens", "G20 summit", 9), mk("Summit day two", "g20 summit", 8),
+                                    mk("Rents fall", "", 2)], now)
+        self.assertEqual([i["title"] for i in week], ["Summit opens", "Rents fall"])
+        self.assertEqual(len(log), 3)
+        json.dumps(log)  # what run() saves
+
+    def test_load_and_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "x.json"
+            self.assertEqual(news.load(f), {})
+            f.write_text("{bad")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(news.load(f), {})  # a corrupt file doesn't stop the run
+            news.save(f, '{"a": 1}')
+            self.assertEqual(news.load(f), {"a": 1})
 
 
 if __name__ == "__main__":
