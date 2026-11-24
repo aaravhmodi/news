@@ -416,7 +416,7 @@ def apply_brief(sections, brief):
             i["why"] = s["why"].strip()
             reach, ripple, lasting, i["you"] = (max(0, min(10, s[k])) for k in ("reach", "ripple", "lasting", "you"))
             i["world"] = 0.3 * reach + 0.45 * ripple + 0.25 * lasting  # knock-on effects weigh most
-            i["knock_on"], i["motive"] = (s.get(k, "").strip() for k in ("knock_on", "motive"))
+            i["knock_on"], i["motive"] = (s.get(k, "").strip().replace("->", "→") for k in ("knock_on", "motive"))
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 

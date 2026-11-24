@@ -45,7 +45,7 @@ class T(unittest.TestCase):
         sections = {"World": [a], "Tech": [b]}
         apply_brief(sections, {"stories": [
             {"id": 1, "summary": " AI b ", "why": "rent", "reach": 12, "ripple": 10, "lasting": 10,  # 12 -> 10
-             "knock_on": "Moves markets", "motive": "Says <safety>", "you": 9,
+             "knock_on": "Strike -> oil up", "motive": "Says <safety>", "you": 9,
              "debate": "Should AI be <regulated>?", "side_a": "Safety", "side_b": "Innovation"},
             {"id": 0, "summary": "", "why": "", "reach": 2, "ripple": 2, "lasting": 2, "knock_on": "", "motive": "", "you": 1,
              "debate": "", "side_a": "", "side_b": ""},
@@ -59,7 +59,7 @@ class T(unittest.TestCase):
         self.assertIn("Why it matters to you:</b> rent", page)
         self.assertIn('<p class="tag">Tech</p>', page)  # For You tiles name their topic
         self.assertIn("World 6/10", page)  # 0.6 * AI 10, no coverage or spread
-        self.assertIn("<b>How it spreads:</b> Moves markets</p><p><b>Why they did it:</b> Says &lt;safety&gt;", page)
+        self.assertIn("<b>How it spreads:</b> Strike → oil up</p><p><b>Why they did it:</b> Says &lt;safety&gt;", page)
         self.assertEqual(page.count('class="knock"'), 2)  # b only, in For You and Tech
         self.assertIn("<b>The debate:</b> Should AI be &lt;regulated&gt;?", page)
         self.assertEqual(page.count('class="debate"'), 2)  # b's tile in For You and in Tech; none for a
