@@ -77,6 +77,16 @@ class T(unittest.TestCase):
         self.assertEqual(same[0]["you_score"], 2)  # watchlist: Carney, tariffs
         self.assertEqual(other["you_score"], 0)  # "Ice storm" is not ICE
 
+    def test_markets_strip(self):
+        now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        page = render({"World": []}, now, [("S&P/TSX", 34082.12, 2.69), ("Oil", 58.2, -1.04),
+                                           ("Loonie", 0.7123, 0.1)], "Stocks up <a lot>")
+        self.assertIn("<b>34,082</b>", page)
+        self.assertIn('<b>$58.20</b> <span class="down"><span aria-hidden="true">&#9660;</span> -1.0%', page)
+        self.assertIn("<b>US$0.712</b>", page)
+        self.assertIn("<p>Stocks up &lt;a lot&gt;</p>", page)
+        self.assertNotIn("%MARKETS%", render({"World": []}, now))  # no data, no strip
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -185,6 +185,29 @@ def fetch(url):
         return r.read()
 
 
+# --- Markets ----------------------------------------------------------------------------
+MARKETS = [("S&P/TSX", "^GSPTSE"), ("S&P 500", "^GSPC"), ("Nasdaq", "^IXIC"),
+           ("Oil", "CL=F"), ("Gold", "GC=F"), ("Loonie", "CADUSD=X")]
+
+
+def markets():
+    """[(name, price, % change on the last close)] from Yahoo's keyless chart API; a failing symbol is skipped."""
+    out = []
+    for name, sym in MARKETS:
+        try:
+            data = json.loads(fetch(f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}"
+                                    "?range=5d&interval=1d"))
+            closes = [c for c in data["chart"]["result"][0]["indicators"]["quote"][0]["close"] if c is not None]
+            out.append((name, closes[-1], (closes[-1] / closes[-2] - 1) * 100))
+        except Exception as e:  # shortcut: Yahoo's API is unofficial; swap in a keyed feed if it starts failing
+            print(f"skip market {sym}: {e}", file=sys.stderr)
+    return out
+
+
+def price(name, value):
+    return f"US${value:.3f}" if name == "Loonie" else f"${value:,.2f}" if value < 10000 else f"{value:,.0f}"
+
+
 # --- Importance scoring ---------------------------------------------------------------
 # A blend of what news rankers use. Coverage: how many separate outlets in today's scrape
 # carry the story (cluster size is the main importance signal in the research). World: an
@@ -329,13 +352,18 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      at most 20 words each; otherwise "". Be fair to both and never say which side is right.
    What happened comes only from the given text. Effects and motives may use well-established background
    knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
+2. markets: if a MARKETS line is given, at most 35 words for this reader: what the biggest moves were,
+   what moved them if a story in the list explains it (say which), and what it means for them
+   (savings, tuition costs, prices, jobs, the loonie). If no story explains a move, do not guess why.
+   If there is no MARKETS line, "".
 The reader: {READER}"""
 
 BRIEF_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["stories"],
+    "required": ["stories", "markets"],
     "properties": {
+        "markets": {"type": "string"},
         "stories": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
                                                                   "you", "debate", "side_a", "side_b"],
@@ -349,9 +377,11 @@ BRIEF_SCHEMA = {
 }
 
 
-def ask_openai(items):
+def ask_openai(items, moves=()):
     """One cheap call for the whole day's stories. Returns the parsed JSON brief."""
     lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:160]}' for n, i in enumerate(items))
+    if moves:
+        lines += "\nMARKETS|" + "|".join(f"{n} {price(n, v)} {c:+.1f}%" for n, v, c in moves)
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
@@ -414,8 +444,12 @@ def notify(sections, seen, now):
     return [i["link"] for items in new.values() for i in items]
 
 
-def render(sections, now):
+def render(sections, now, moves=(), note=""):
     e = html.escape
+    strip = ('<section class="markets" aria-label="Markets"><ul>' + "".join(
+        f'<li><span>{e(n)}</span> <b>{price(n, v)}</b> <span class="{"up" if c >= 0 else "down"}">'
+        f'<span aria-hidden="true">{"&#9650;" if c >= 0 else "&#9660;"}</span> {c:+.1f}%</span></li>' for n, v, c in moves)
+        + '</ul>' + (f'<p>{e(note)}</p>' if note else "") + '</section>') if moves else ""
     nav = "".join(
         f'<a id="tab-s{n}" href="#s{n}">{e(c)}</a>'
         for n, c in enumerate(sections)
@@ -449,7 +483,8 @@ def render(sections, now):
             f'<h2 id="heading-s{n}">{e(cat)}</h2>{content}</section>'
         )
     page = (ROOT / "template.html").read_text(encoding="utf-8")
-    return page.replace("%UPDATED%", now.isoformat()).replace("%NAV%", nav).replace("%SECTIONS%", "".join(parts))
+    return (page.replace("%UPDATED%", now.isoformat()).replace("%MARKETS%", strip).replace("%NAV%", nav)
+            .replace("%SECTIONS%", "".join(parts)))
 
 
 def run(push=True):
@@ -458,9 +493,12 @@ def run(push=True):
     sections = collect(now)
     if not any(sections.values()):  # offline: keep yesterday's page and retry later
         raise RuntimeError("no feed could be read")
+    moves, note = markets(), ""
     if os.environ.get("OPENAI_API_KEY"):
         try:
-            apply_brief(sections, ask_openai([i for its in sections.values() for i in its]))
+            brief = ask_openai([i for its in sections.values() for i in its], moves)
+            apply_brief(sections, brief)
+            note = brief.get("markets", "").strip()
         except Exception as e:  # coverage-only scores and the feeds' summaries are a fine fallback
             print(f"openai failed, using feed summaries: {e}", file=sys.stderr, flush=True)
     sections = rank(sections, now)
@@ -473,7 +511,7 @@ def run(push=True):
     seen = {k: v for k, v in seen.items() if now - datetime.fromisoformat(v) < timedelta(days=7)}
     SITE.mkdir(parents=True, exist_ok=True)
     SEEN.write_text(json.dumps(seen, indent=0))
-    (SITE / "index.html").write_text(render(sections, now), encoding="utf-8")
+    (SITE / "index.html").write_text(render(sections, now, moves, note), encoding="utf-8")
     print(now.isoformat(), {c: len(i) for c, i in sections.items()}, flush=True)
 
 

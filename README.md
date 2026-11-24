@@ -12,6 +12,12 @@ IEEE Spectrum, Hacker News), refreshed once a day at 7am Toronto time.
   (reasoning off, ~15k tokens, well under a cent) rewrites each summary in one plain sentence and picks 8 stories
   for a "For You" tab. Without the key, or if the call fails, the page uses the outlets' own summaries.
 
+## Markets strip
+
+The top of the page shows the S&P/TSX, S&P 500, Nasdaq, oil, gold and the loonie with their change since the
+last close (Yahoo Finance's keyless chart API, `MARKETS` in `news.py`). The AI adds one line on what moved them,
+only when a story in the day's brief explains it, and what it means for you.
+
 ## How stories are ranked
 
 `score()` in `news.py` blends these signals, each 0-10:

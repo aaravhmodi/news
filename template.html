@@ -20,6 +20,11 @@
   .masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1.25rem 1.25rem .75rem; }
   h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
   .updated { margin: 0; color: var(--muted); font-size: .85rem; }
+  .markets { max-width: 60rem; margin: 0 auto .75rem; padding: 0 1.25rem; font-size: .82rem; }
+  .markets ul { list-style: none; margin: 0; padding: .55rem .8rem; display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; background: var(--tile); border: 1px solid var(--rule); border-radius: 10px; }
+  .markets li span:first-child { color: var(--muted); }
+  .markets .up { color: #1e7a3c; } .markets .down { color: var(--accent); }
+  .markets p { margin: .45rem .2rem 0; color: #3a3a3a; }
   .topic-nav { position: sticky; top: 0; z-index: 2; background: var(--paper); border-bottom: 1px solid var(--rule); }
   .topics { display: flex; overflow-x: auto; padding: 0 .75rem; scrollbar-width: none; }
   .topics::-webkit-scrollbar { display: none; }
@@ -66,6 +71,7 @@
   <h1>The Brief</h1>
   <p class="updated">Updated <time datetime="%UPDATED%">%UPDATED%</time></p>
 </header>
+%MARKETS%
 <nav class="topic-nav" aria-label="News topics"><div class="topics">%NAV%</div></nav>
 <main id="main" tabindex="-1">
 %SECTIONS%
