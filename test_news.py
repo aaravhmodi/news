@@ -128,6 +128,26 @@ class T(unittest.TestCase):
         self.assertEqual(rank({"Canada": [alone], "World": [wide]}, now)["Most Covered"], [wide])
         self.assertIn('datetime="2026-11-24T12:00:00+00:00">Tue, Nov 24, 7:00 AM</time>', render(out, now))
 
+    def test_same_story_other_outlets_are_links_on_one_tile(self):
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        mk = lambda t, src: {"title": t, "summary": "", "source": src, "when": now, "link": f"https://{src}/a"}
+        raw = [mk("Carney announces new tariffs on US steel imports", "CBC"),
+               mk("Carney unveils tariffs on American steel imports", "CNN"),
+               mk("Carney announces steel tariffs on US imports", "CBC")]  # same outlet: no repeat link
+        with mock.patch.dict(news.FEEDS, {"Canada": [("x", "u")]}, clear=True),                 mock.patch.object(news, "fetch", return_value=b""), mock.patch.object(news, "parse", return_value=raw):
+            [tile] = news.collect(now)["Canada"]
+        self.assertEqual(tile["also"], [{"source": "CNN", "link": "https://CNN/a"}])
+        self.assertIn('Also at: <a href="https://CNN/a" target="_blank" rel="noopener">CNN</a>',
+                      render({"Canada": [tile]}, now))
+
+    def test_runs_twice_a_day(self):
+        tz = news.ZoneInfo("America/Toronto")
+        at = lambda d, h, m=0: datetime(2026, 11, d, h, m, tzinfo=tz)
+        self.assertEqual(news.last_due(at(24, 6, 59)), at(23, 19))
+        self.assertEqual(news.last_due(at(24, 7)), at(24, 7))
+        self.assertEqual(news.last_due(at(24, 18)), at(24, 7))
+        self.assertEqual(news.last_due(at(24, 23)), at(24, 19))
+
     def test_votes_tune_you_score(self):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
         fb = {f"https://x/{n}": {"section": "Sports", "vote": -1} for n in range(6)}

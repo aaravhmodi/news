@@ -116,7 +116,7 @@ FEEDS = {
 PER_SECTION = 10
 MAX_AGE = timedelta(days=2)
 SLOW_AGE = timedelta(days=5)  # debates move slower than news
-RUN_AT = 7  # daily refresh and push, Toronto hour
+RUN_AT = (7, 19)  # refresh and push twice a day, Toronto hours
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")  # OpenAI's cheapest tier
 FOR_YOU = 8
 MOST = 12
@@ -290,7 +290,9 @@ def rank(sections, now, per_topic=3):
     pool = sorted((i for items in sections.values() for i in items), key=lambda i: score(i, now), reverse=True)
     best = {}
     for i in pool:
-        best.setdefault(i.get("thread") or i["link"], i)
+        b = best.setdefault(i.get("thread") or i["link"], i)
+        if b is not i:  # another angle on the same event: its outlet becomes an extra link
+            also(b, i)
     pool = [i for i in pool if best[i.get("thread") or i["link"]] is i]
     for cat, items in sections.items():
         sections[cat] = [i for i in pool if i in items]  # pool order is score order
@@ -320,23 +322,35 @@ def collect(now):
         # readers' letters to the Guardian are not news
         raw[cat] = [i for i in items if now - i["when"] < age and not re.search(r"\bLetters?$", i["title"])]
     add_coverage([i for items in raw.values() for i in items])
-    sections, shown = {}, []
+    sections, shown = {}, []  # shown: (headline words, tile) for every tile so far
     for cat, items in raw.items():  # each section's PER_SECTION most important stories, one tile per story
         items.sort(key=lambda i: score(i, now), reverse=True)
         picked = []
         for i in items:
-            # BBC's main feed mixes in sport; it belongs under Sports
-            sport_in_top = cat == "Top Stories" and "/sport/" in i["link"]
-            if len(picked) < PER_SECTION and not sport_in_top and not any(same_story(i["words"], w) for w in shown):
-                shown.append(i["words"])
-                picked.append(dict(i, section=cat))
+            if cat == "Top Stories" and "/sport/" in i["link"]:  # BBC's main feed mixes in sport
+                continue
+            twin = next((tile for w, tile in shown if same_story(i["words"], w)), None)
+            if twin:  # the same story from another outlet becomes an extra link on the first tile
+                also(twin, i)
+            elif len(picked) < PER_SECTION:
+                tile = dict(i, section=cat)
+                shown.append((i["words"], tile))
+                picked.append(tile)
         sections[cat] = picked
     return sections
 
 
+def also(tile, other):
+    """Add other's outlet and link to tile's "Also at" list, once per outlet."""
+    links = tile.setdefault("also", [])
+    if other["source"] != tile["source"] and all(a["source"] != other["source"] for a in links):
+        links.append({"source": other["source"], "link": other["link"]})
+
+
 BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own description.
 1. For every id write:
-   - summary: one plain, neutral sentence (at most 25 words) saying what happened.
+   - summary: 2-3 plain, neutral sentences (at most 60 words): what happened, then the context a
+     reader needs to understand it: what led to it, who the key players are, or what it changes.
    - why: why this reader should look at it, addressed to "you" (at most 15 words), concrete
      (e.g. "Could push your rent up", "Changes work permits for students like you").
      If it barely affects them, give the general-knowledge reason in a few words. When ripple is 6 or
@@ -374,8 +388,8 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
      storyline, at most 5 words, e.g. "Canada-US trade talks". Reuse a name from the THREADS line exactly
      when it is the same storyline, and give every story about it the same name. Stories that cover the
      same event from different angles (reaction, markets, analysis) always share a name. Otherwise "".
-   What happened comes only from the given text. Effects and motives may use well-established background
-   knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
+   What happened comes only from the given text. Context, effects and motives may use well-established
+   background knowledge, but no numbers that are not in the text. No opinions, no hype. Be strict: most stories are 2-5.
 2. markets: if a MARKETS line is given, at most 35 words for this reader: what the biggest moves were,
    what moved them if a story in the list explains it (say which), and what it means for them
    (savings, tuition costs, prices, jobs, the loonie). If no story explains a move, do not guess why.
@@ -422,7 +436,7 @@ def ask_openai(items, moves=(), known=(), liked=(), disliked=()):
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
-        "max_output_tokens": 16000,  # a brief is ~11k; caps a reply that runs on after its JSON
+        "max_output_tokens": 32000,  # a brief is ~18k; caps a reply that runs on after its JSON
         "instructions": BRIEF_PROMPT,
         "input": lines,
         "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},
@@ -432,13 +446,17 @@ def ask_openai(items, moves=(), known=(), liked=(), disliked=()):
         data=json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as r:
+    with urllib.request.urlopen(req, timeout=300) as r:
         data = json.load(r)
     print("openai usage:", data.get("usage", {}).get("input_tokens"), "in,",
           data.get("usage", {}).get("output_tokens"), "out", flush=True)
-    text = next(c["text"] for o in data["output"] if o["type"] == "message"
-                for c in o["content"] if c["type"] == "output_text")
-    return json.JSONDecoder().raw_decode(text.lstrip())[0]  # the model sometimes keeps writing after the JSON
+    text = "".join(c["text"] for o in data["output"] if o["type"] == "message"
+                   for c in o["content"] if c["type"] == "output_text")
+    try:  # start at the first brace (skips an empty part or a code fence) and ignore anything after the JSON
+        return json.JSONDecoder().raw_decode(text, text.index("{"))[0]
+    except ValueError:
+        print(f"openai reply was not JSON: {text[:200]!r}", file=sys.stderr, flush=True)
+        raise
 
 
 def apply_brief(sections, brief):
@@ -608,6 +626,9 @@ def render(sections, now, moves=(), note=""):
                + (f'<span>{i["outlets"]} outlets, {i["regions"]} regions</span>' if i.get("outlets", 1) > 1 else "")
                + '</p>'
                if "world" in i else "")
+            + ('<p class="also">Also at: ' + ' <span aria-hidden="true">&middot;</span> '.join(
+                f'<a href="{e(a["link"])}" target="_blank" rel="noopener">{e(a["source"])}</a>'
+                for a in i["also"][:6]) + '</p>' if i.get("also") else "")
             + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p>'
             '<p class="vote"><button type="button" data-vote="1" aria-pressed="false">&#128077; Relevant</button>'
@@ -700,18 +721,23 @@ def record_vote(link, title, section, vote, now=None):
         FEEDBACK.write_text(json.dumps(fb, indent=0))
 
 
+def last_due(now):
+    """The most recent RUN_AT slot at or before now (yesterday's last one before the first today)."""
+    slots = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in RUN_AT]
+    past = [s for s in slots if s <= now]
+    return max(past) if past else max(slots) - timedelta(days=1)
+
+
 def serve(port=8097):
-    """Serve the page; rebuild it and push once a day at RUN_AT Toronto time."""
+    """Serve the page; rebuild it and push at each RUN_AT hour, Toronto time."""
     SITE.mkdir(parents=True, exist_ok=True)
     handler = partial(Handler, directory=SITE)
     threading.Thread(target=ThreadingHTTPServer(("", port), handler).serve_forever, daemon=True).start()
     toronto, page = ZoneInfo("America/Toronto"), SITE / "index.html"
     while True:
         now = datetime.now(toronto)
-        due = now.replace(hour=RUN_AT, minute=0, second=0, microsecond=0)
-        if due > now:
-            due -= timedelta(days=1)
-        # a restart (deploy, reboot) doesn't re-run a day that is already done
+        due = last_due(now)
+        # a restart (deploy, reboot) doesn't re-run a slot that is already done
         if not page.exists() or datetime.fromtimestamp(page.stat().st_mtime, toronto) < due:
             try:
                 run()
