@@ -355,7 +355,7 @@ def ask_openai(items):
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
-        "max_output_tokens": 12000,
+        "max_output_tokens": 24000,  # a run uses ~10k; truncated JSON would drop the whole brief
         "instructions": BRIEF_PROMPT,
         "input": lines,
         "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},
