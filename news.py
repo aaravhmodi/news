@@ -380,8 +380,9 @@ def free_first(tile):
 
 def rank(sections, now, per_topic=3):
     """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'.
-    One tile per event: other angles on it become links on the best tile, which every section that had
-    the event shows. Different events in one storyline keep their own tiles."""
+    One tile per event: other angles on it become links on the best tile. A tile the AI rated shows in its
+    topics; any other shows in every section that had its event. Different events in one storyline keep
+    their own tiles."""
     pool = sorted(stories(sections), key=lambda i: score(i, now), reverse=True)
     best = {}
     for i in pool:
@@ -393,7 +394,7 @@ def rank(sections, now, per_topic=3):
         free_first(i)
     for cat, items in sections.items():  # pool order is score order; collect() over-fetched for this trim
         has = {event(i) for i in items}
-        sections[cat] = [i for i in pool if event(i) in has][:PER_SECTION]
+        sections[cat] = [i for i in pool if (cat in i["topics"] if i.get("topics") else event(i) in has)][:PER_SECTION]
     picks, per = [], {}
     for i in pool:
         if (len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic
@@ -429,10 +430,8 @@ def collect(now):
             if cat == "Top Stories" and "/sport/" in i["link"]:  # BBC's main feed mixes in sport
                 continue
             twin = next((tile for w, tile in shown if same_story(i["words"], w)), None)
-            if twin:  # the same story from another outlet becomes an extra link on the first tile
-                also(twin, i)
-                if len(picked) < PER_SECTION + 4 and all(t is not twin for t in picked):
-                    picked.append(twin)  # a tile from an earlier section: this tab keeps its own top stories
+            if twin:  # the same story from another outlet becomes an extra link on the first tile; the AI's
+                also(twin, i)  # topics then put that tile in every section it fits
             elif len(picked) < PER_SECTION + 4:  # spares: rank() merges same-storyline tiles, then trims
                 tile = dict(i, section=cat)
                 shown.append((i["words"], tile))
@@ -494,6 +493,9 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - event: the single event or announcement the story reports, at most 6 words, e.g. "Nvidia reinstates
      Jensen Huang". Stories about the same event from any angle (reaction, markets, analysis, another
      outlet) use exactly the same text; a new development in the same storyline is a different event.
+   - topics: the 1-3 sections this story belongs in, best fit first, from: {", ".join(FEEDS)}.
+     Judge by what the story is about, not the section it came in (a war is not Tech; a tariff is
+     Business and maybe World or Canada). Top Stories only for the day's most important news.
    - buzz (0-10): how likely people around this reader (classmates, coworkers, friends in Canada) bring
      it up in conversation this week. 0-2 almost nobody; 5 some people; 8 most people; 10 everyone
      (a Canadian team in a final, a huge celebrity death, a viral moment).
@@ -526,13 +528,14 @@ BRIEF_SCHEMA = {
         }},
         "stories": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
-                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "buzz"],
+                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "topics", "buzz"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
                            "reach": {"type": "integer"}, "ripple": {"type": "integer"},
                            "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "motive": {"type": "string"},
                            "you": {"type": "integer"},
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"},
                            "thread": {"type": "string"}, "event": {"type": "string"},
+                           "topics": {"type": "array", "items": {"type": "string", "enum": list(FEEDS)}},
                            "buzz": {"type": "integer"}},
         }},
     },
@@ -550,7 +553,7 @@ def ask_openai(items, moves=(), known=(), disliked=(), trends=()):
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
-        "max_output_tokens": 32000,  # a brief is ~18k; caps a reply that runs on after its JSON
+        "max_output_tokens": 40000,  # a brief of ~200 stories is ~25k; caps a reply that runs on after its JSON
         "instructions": BRIEF_PROMPT,
         "input": lines,
         "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},
@@ -590,6 +593,9 @@ def apply_brief(sections, brief):
             i["knock_on"], i["motive"] = (s.get(k, "").strip().replace("->", "→") for k in ("knock_on", "motive"))
             i["thread"], i["event"] = s.get("thread", "").strip(), s.get("event", "").strip()
             i["buzz"] = max(0, min(10, s.get("buzz", 0)))
+            i["topics"] = [t for t in dict.fromkeys(s.get("topics", [])) if t in FEEDS][:3]
+            if i["topics"]:  # the AI's best fit is its home topic (For You tag, votes, small talk)
+                i["section"] = i["topics"][0]
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
 

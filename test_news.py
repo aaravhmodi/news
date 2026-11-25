@@ -218,7 +218,7 @@ class T(unittest.TestCase):
         self.assertIn(">Talks resume</a>", page)
         self.assertEqual(news.keys("Nvidia reinstated"), news.keys("NVIDIA reinstatement"))  # stems match
 
-    def test_twin_shows_in_both_tabs_and_ai_sees_it_once(self):
+    def test_ai_topics_place_tiles(self):
         now = datetime(2026, 11, 24, tzinfo=timezone.utc)
         mk = lambda t, src: {"title": t, "summary": "", "source": src, "when": now, "link": f"https://{src}/{t}"}
         feeds = {"Top Stories": [mk("Carney announces new tariffs on US steel imports", "CBC")],
@@ -229,13 +229,22 @@ class T(unittest.TestCase):
                 mock.patch.object(news, "parse", side_effect=lambda u, src: feeds[src]):
             out = news.collect(now)
         [tile] = out["Top Stories"]
-        self.assertIs(out["Canada"][0], tile)  # the Canada tab keeps its top story
-        self.assertEqual(len(news.stories(out)), 2)  # sent to the AI once
-        news.apply_brief(out, {"stories": [
-            {"id": 0, "summary": "Steel tariffs.", "why": "", "reach": 5, "ripple": 5, "lasting": 5, "knock_on": "",
-             "motive": "", "you": 5, "debate": "", "side_a": "", "side_b": "", "thread": "", "event": "", "buzz": 2}]})
+        self.assertEqual([i["title"] for i in out["Canada"]], ["Ontario rent freeze extended"])  # a twin takes no slot
+        self.assertEqual(len(news.stories(out)), 2)  # each story sent to the AI once
+        rate = lambda n, topics: {"id": n, "summary": "Steel tariffs.", "why": "", "reach": 5, "ripple": 5, "lasting": 5,
+                                  "knock_on": "", "motive": "", "you": 5, "debate": "", "side_a": "", "side_b": "",
+                                  "thread": "", "event": "", "topics": topics, "buzz": 2}
+        # the AI puts the tariff story in Canada and Business, and leaves the rent story unrated
+        news.apply_brief(out, {"stories": [rate(0, ["Canada", "Business", "Canada", "Nonsense"])]})
+        self.assertEqual((tile["topics"], tile["section"]), (["Canada", "Business"], "Canada"))
         self.assertTrue(tile["ai_background"])  # the feed had no description
         self.assertIn("AI background</span> Steel tariffs.", render(out, now))
+        out["Business"] = []
+        ranked = news.rank(out, now)
+        self.assertNotIn(tile, ranked["Top Stories"])  # not in its topics: dropped from the feed it came in
+        self.assertIn(tile, ranked["Canada"])
+        self.assertIn(tile, ranked["Business"])
+        self.assertIn("Ontario rent freeze extended", [i["title"] for i in ranked["Canada"]])  # unrated: stays home
 
     def test_paywalled_tile_links_free_outlet(self):
         tile = {"source": "The Globe and Mail", "link": "https://g/a",
