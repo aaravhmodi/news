@@ -165,11 +165,11 @@ class T(unittest.TestCase):
         now = datetime(2026, 11, 23, tzinfo=timezone.utc)
         vote = lambda sec, v, days=1: {"section": sec, "vote": v, "when": (now - timedelta(days=days)).isoformat()}
         fb = {f"https://x/{n}": vote("Sports", -1) for n in range(10)}
-        fb["https://x/w"] = vote("World", 1)
-        fb.update({f"https://x/t{n}": vote("Tech", 1) for n in range(3)})
+        fb["https://x/w"] = vote("World", -1)
+        fb.update({f"https://x/t{n}": vote("Tech", 1) for n in range(3)})  # old Relevant votes: ignored
         fb.update({f"https://x/o{n}": vote("AI", -1, days=40) for n in range(4)})  # over 30 days: ignored
         # halved, so one vote moves nothing; capped at -4
-        self.assertEqual(prefs(fb, now), {"Sports": -4, "World": 0, "Tech": 1})
+        self.assertEqual(prefs(fb, now), {"Sports": -4, "World": 0})
         i = {"title": "Leafs win", "summary": "", "when": now, "outlets": 1, "world": 2, "you": 3, "pref": -4}
         score(i, now)
         self.assertEqual(i["you_score"], 0)  # never below 0
@@ -187,11 +187,12 @@ class T(unittest.TestCase):
                 except urllib.error.HTTPError as e:
                     return e.code
 
-            vote = {"link": "https://cbc.ca/a", "title": "Rents fall", "section": "Canada", "vote": 1}
+            vote = {"link": "https://cbc.ca/a", "title": "Rents fall", "section": "Canada", "vote": -1}
             self.assertEqual(post(vote), 204)
+            self.assertEqual(post(dict(vote, vote=1)), 400)  # no Relevant button any more
             self.assertEqual(post(dict(vote, link="javascript:alert(1)")), 400)
             self.assertEqual(post(dict(vote, vote=5)), 400)
-            self.assertEqual(json.loads((Path(d) / "fb.json").read_text())["https://cbc.ca/a"]["vote"], 1)
+            self.assertEqual(json.loads((Path(d) / "fb.json").read_text())["https://cbc.ca/a"]["vote"], -1)
             self.assertEqual(post(dict(vote, vote=0)), 204)  # tapping again clears it
             self.assertEqual(json.loads((Path(d) / "fb.json").read_text()), {})
             server.shutdown()

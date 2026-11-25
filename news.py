@@ -139,7 +139,7 @@ DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 SITE = DATA / "site"
 SEEN = DATA / "seen.json"
 THREADS = DATA / "threads.json"  # ongoing storylines and their past-year timelines, kept between runs
-FEEDBACK = DATA / "feedback.json"  # the reader's Relevant / Not for me votes
+FEEDBACK = DATA / "feedback.json"  # the reader's Not for me votes
 WEEK = DATA / "week.json"  # each run's best stories, for the This Week tab
 KEEP_THREADS = timedelta(days=14)
 KEEP_ARCHIVE = timedelta(days=60)
@@ -510,8 +510,7 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
 4. threads: for every thread name you used: name; status, where it stands now and what to watch next, at
    most 35 words, from the given text; query, 2-4 broad search words for the whole storyline, not today's detail
    ("Russia Ukraine war", not "Ukraine drones Russian ships Libya").
-LIKED and DISLIKED lines are headlines the reader marked relevant or not for them: rate "you" for
-similar stories higher or lower.
+The DISLIKED line is headlines the reader marked not for them: rate "you" lower for similar stories.
 The reader: {READER}"""
 
 BRIEF_SCHEMA = {
@@ -540,12 +539,12 @@ BRIEF_SCHEMA = {
 }
 
 
-def ask_openai(items, moves=(), known=(), liked=(), disliked=(), trends=()):
+def ask_openai(items, moves=(), known=(), disliked=(), trends=()):
     """One cheap call for the whole day's stories. Returns the parsed JSON brief."""
     lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:160]}' for n, i in enumerate(items))
     if moves:
         lines += "\nMARKETS|" + "|".join(f"{n} {price(n, v)} {c:+.1f}%" for n, v, c in moves)
-    for label, values in (("THREADS", known), ("LIKED", liked), ("DISLIKED", disliked), ("TRENDING", trends)):
+    for label, values in (("THREADS", known), ("DISLIKED", disliked), ("TRENDING", trends)):
         if values:
             lines += f"\n{label}|" + "|".join(values)
     body = {
@@ -596,13 +595,14 @@ def apply_brief(sections, brief):
 
 
 def prefs(feedback, now):
-    """Net Relevant minus Not for me votes per topic over the last 30 days, halved and capped at +/-4: added to
-    the You score. Halved so one vote doesn't move a whole topic; the AI also sees the voted headlines."""
+    """Not for me votes per topic over the last 30 days, halved and capped at -4: added to the You score.
+    Everything else counts as relevant, so old Relevant (+1) votes are ignored. Halved so one vote doesn't
+    sink a whole topic; the AI also sees the voted headlines."""
     net = {}
     for v in feedback.values():
-        if now - datetime.fromisoformat(v["when"]) < timedelta(days=30):
+        if v["vote"] < 0 and now - datetime.fromisoformat(v["when"]) < timedelta(days=30):
             net[v["section"]] = net.get(v["section"], 0) + v["vote"]
-    return {k: max(-4, min(4, int(n / 2))) for k, n in net.items()}
+    return {k: max(-4, int(n / 2)) for k, n in net.items()}
 
 
 def track(sections, threads, store, now):
@@ -787,8 +787,7 @@ def render(sections, now, moves=(), note="", numbers=(), tldr=(), warn=""):
                 for a in i["also"][:6]) + '</p>' if i.get("also") else "")
             + f'<p class="story-meta">{e(i["source"])} <span aria-hidden="true">&middot;</span> '
             f'<time datetime="{e(i["when"].isoformat())}">{i["when"]:%b %d}</time></p>'
-            '<p class="vote"><button type="button" data-vote="1" aria-pressed="false">&#128077; Relevant</button>'
-            '<button type="button" data-vote="-1" aria-pressed="false">&#128078; Not for me</button></p>'
+            '<p class="vote"><button type="button" data-vote="-1" aria-pressed="false">&#128078; Not for me</button></p>'
             '</article></li>'
             for i in items
         )
@@ -821,11 +820,11 @@ def run(notify_phone=True):
         print(f"skip trends: {e}", file=sys.stderr)
         trends = []
     votes = sorted(feedback.values(), key=lambda v: v["when"])
-    liked, disliked = ([v["title"] for v in votes if v["vote"] == d][-15:] for d in (1, -1))
+    disliked = [v["title"] for v in votes if v["vote"] < 0][-15:]
     if os.environ.get("OPENAI_API_KEY"):
         for attempt in (1, 2):  # an odd reply now and then is not JSON; one retry fixes it
             try:
-                brief = ask_openai(stories(sections), moves, list(store.get("status", {})), liked, disliked,
+                brief = ask_openai(stories(sections), moves, list(store.get("status", {})), disliked,
                                    [t["term"] for t in trends])
                 apply_brief(sections, brief)
                 note, threads = brief.get("markets", "").strip(), brief.get("threads", [])
@@ -866,7 +865,7 @@ def run(notify_phone=True):
 
 
 class Handler(SimpleHTTPRequestHandler):
-    """Serves the site and takes POST /feedback {link, title, section, vote: 1, -1 or 0 to clear}."""
+    """Serves the site and takes POST /feedback {link, title, section, vote: -1 or 0 to clear}."""
 
     def do_POST(self):
         if self.path != "/feedback":
@@ -877,7 +876,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("bad size")
             v = json.loads(self.rfile.read(size))
             link, vote = str(v["link"]), int(v["vote"])
-            if not link.startswith(("https://", "http://")) or vote not in (-1, 0, 1):
+            if not link.startswith(("https://", "http://")) or vote not in (-1, 0):
                 raise ValueError("bad vote")
             record_vote(link, str(v.get("title", ""))[:300], str(v.get("section", ""))[:60], vote)
         except (ValueError, KeyError, TypeError, AttributeError):  # JSONDecodeError is a ValueError

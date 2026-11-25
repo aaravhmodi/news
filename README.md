@@ -49,10 +49,10 @@ year (Google News searched a quarter at a time, refreshed weekly).
 
 ## Your votes
 
-Every story has Relevant / Not for me buttons. Votes go to `POST /feedback` and are kept in
-`data/feedback.json` (newest 500). Half of each topic's net votes from the last 30 days (capped at +/-4) is added
-to its You score, so one vote doesn't move a whole topic, and the last 15 liked and disliked headlines are shown to
-the AI so it rates similar stories higher or lower.
+Every story counts as relevant unless you tap its Not for me button. Votes go to `POST /feedback` and are kept in
+`data/feedback.json` (newest 500). Half of each topic's Not for me votes from the last 30 days (capped at -4) is
+taken off its You score, so one vote doesn't sink a whole topic, and the last 15 of those headlines are shown to
+the AI so it rates similar stories lower.
 
 ## How stories are ranked
 
