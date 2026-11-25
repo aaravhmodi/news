@@ -15,7 +15,8 @@ Wired, TechCrunch, IEEE Spectrum, Hacker News), refreshed twice a day, at 7am an
   line and the ratings below. Other outlets running the same event are linked on its tile ("Also at"); when the
   tile's outlet is paywalled and a free one ran it too, the free one gets the main link. Stories whose feed gave
   only a headline (Google News results) are marked **AI background**: their context is the AI's general
-  knowledge, not reporting. Without the key, or if the call fails, the page uses the outlets' own summaries and
+  knowledge, not reporting. When the outlet's text states figures, up to 3 show as **key figures** chips under
+  the summary (only numbers in the text, never ones the AI recalls or computes). Without the key, or if the call fails, the page uses the outlets' own summaries and
   says so in a banner.
 
 ## Markets and key numbers

@@ -235,16 +235,20 @@ class T(unittest.TestCase):
                                   "knock_on": "", "motive": "", "you": 5, "debate": "", "side_a": "", "side_b": "",
                                   "thread": "", "event": "", "topics": topics, "buzz": 2}
         # the AI puts the tariff story in Canada and Business, and leaves the rent story unrated
-        news.apply_brief(out, {"stories": [rate(0, ["Canada", "Business", "Canada", "Nonsense"])]})
+        news.apply_brief(out, {"stories": [dict(rate(0, ["Canada", "Business", "Canada", "Nonsense"]),
+                                                stats=[{"value": "25%", "label": "tariff on US steel"},
+                                                       {"value": " ", "label": "dropped: no number"}])]})
+        self.assertEqual(tile["stats"], [{"value": "25%", "label": "tariff on US steel"}])
+        self.assertIn('<li><b>25%</b> tariff on US steel</li>', render(out, now))
         self.assertEqual((tile["topics"], tile["section"]), (["Canada", "Business"], "Canada"))
         self.assertTrue(tile["ai_background"])  # the feed had no description
         self.assertIn("AI background</span> Steel tariffs.", render(out, now))
         out["Business"] = []
         ranked = news.rank(out, now)
-        self.assertNotIn(tile, ranked["Top Stories"])  # not in its topics: dropped from the feed it came in
-        self.assertIn(tile, ranked["Canada"])
-        self.assertIn(tile, ranked["Business"])
-        self.assertIn("Ontario rent freeze extended", [i["title"] for i in ranked["Canada"]])  # unrated: stays home
+        self.assertIn(tile, ranked["Business"])  # placed by its topics
+        self.assertIn(tile, ranked["Top Stories"])  # not its topic, but its own feed fills the short section
+        self.assertEqual([i["title"] for i in ranked["Canada"]],  # topic tiles first, then the feed's own
+                         ["Carney announces new tariffs on US steel imports", "Ontario rent freeze extended"])
 
     def test_same_as_merges_drifting_event_names(self):
         now = datetime(2026, 11, 24, tzinfo=timezone.utc)

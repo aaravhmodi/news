@@ -380,9 +380,8 @@ def free_first(tile):
 
 def rank(sections, now, per_topic=3):
     """Sort every section by score; the best FOR_YOU stories (max per_topic each) go first as 'For You'.
-    One tile per event: other angles on it become links on the best tile. A tile the AI rated shows in its
-    topics; any other shows in every section that had its event. Different events in one storyline keep
-    their own tiles."""
+    One tile per event: other angles on it become links on the best tile. A section lists the tiles the AI
+    put in its topic, then tiles from its own feed. Different events in one storyline keep their own tiles."""
     pool = sorted(stories(sections), key=lambda i: score(i, now), reverse=True)
     best = {}
     for i in pool:
@@ -394,7 +393,9 @@ def rank(sections, now, per_topic=3):
         free_first(i)
     for cat, items in sections.items():  # pool order is score order; collect() over-fetched for this trim
         has = {event(i) for i in items}
-        sections[cat] = [i for i in pool if (cat in i["topics"] if i.get("topics") else event(i) in has)][:PER_SECTION]
+        # the stories the AI put in this topic, then this section's own feed fills any gap (Top Stories)
+        sections[cat] = ([i for i in pool if cat in i.get("topics", ())]
+                         + [i for i in pool if event(i) in has and cat not in i.get("topics", ())])[:PER_SECTION]
     picks, per = [], {}
     for i in pool:
         if (len(picks) < FOR_YOU and per.get(i["section"], 0) < per_topic
@@ -493,6 +494,10 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - event: the single event or announcement the story reports, at most 6 words, e.g. "Nvidia reinstates
      Jensen Huang". Stories about the same event from any angle (reaction, markets, analysis, another
      outlet) use exactly the same text; a new development in the same storyline is a different event.
+   - stats: up to 3 key figures the given text states (headline or description): value, the number with
+     its unit as written (e.g. "31%", "$41 billion", "48"), and label, what it counts in at most 8 words
+     (e.g. "rise in mortgage delinquencies in Q3", "people wounded"). Only numbers in the text, never
+     computed or recalled ones; [] when the text has none.
    - same_as: the lowest id of another story that reports the same event or the same new figures (another
      outlet, a reaction, analysis or a column on it), else -1. E.g. three headlines on one mortgage
      arrears report, or on one tariff announcement, all point to the first of them.
@@ -531,7 +536,7 @@ BRIEF_SCHEMA = {
         }},
         "stories": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
-                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "same_as", "topics", "buzz"],
+                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "same_as", "topics", "stats", "buzz"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
                            "reach": {"type": "integer"}, "ripple": {"type": "integer"},
                            "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "motive": {"type": "string"},
@@ -539,6 +544,9 @@ BRIEF_SCHEMA = {
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"},
                            "thread": {"type": "string"}, "event": {"type": "string"}, "same_as": {"type": "integer"},
                            "topics": {"type": "array", "items": {"type": "string", "enum": list(FEEDS)}},
+                           "stats": {"type": "array", "items": {
+                               "type": "object", "additionalProperties": False, "required": ["value", "label"],
+                               "properties": {"value": {"type": "string"}, "label": {"type": "string"}}}},
                            "buzz": {"type": "integer"}},
         }},
     },
@@ -547,7 +555,7 @@ BRIEF_SCHEMA = {
 
 def ask_openai(items, moves=(), known=(), disliked=(), trends=()):
     """One cheap call for the whole day's stories. Returns the parsed JSON brief."""
-    lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:160]}' for n, i in enumerate(items))
+    lines = "\n".join(f'{n}|{i["section"]}|{i["title"]}|{i["summary"][:300]}' for n, i in enumerate(items))
     if moves:
         lines += "\nMARKETS|" + "|".join(f"{n} {price(n, v)} {c:+.1f}%" for n, v, c in moves)
     for label, values in (("THREADS", known), ("DISLIKED", disliked), ("TRENDING", trends)):
@@ -597,6 +605,8 @@ def apply_brief(sections, brief):
             i["thread"], i["event"] = s.get("thread", "").strip(), s.get("event", "").strip()
             i["buzz"] = max(0, min(10, s.get("buzz", 0)))
             i["topics"] = [t for t in dict.fromkeys(s.get("topics", [])) if t in FEEDS][:3]
+            i["stats"] = [{"value": st["value"].strip(), "label": st["label"].strip()} for st in s.get("stats", [])
+                          if st["value"].strip() and st["label"].strip()][:3]
             if i["topics"]:  # the AI's best fit is its home topic (For You tag, votes, small talk)
                 i["section"] = i["topics"][0]
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
@@ -790,6 +800,9 @@ def render(sections, now, moves=(), note="", numbers=(), tldr=(), warn=""):
                + ('<span class="ai" title="The outlet gave only a headline; this context is the AI\'s own background">'
                   'AI background</span> ' if i.get("ai_background") else "")
                + f'{e(i["summary"])}</p>' if i.get("summary") else "")
+            + ('<ul class="stats" aria-label="Key figures">' + "".join(
+                f'<li><b>{e(st["value"])}</b> {e(st["label"])}</li>' for st in i["stats"]) + '</ul>'
+               if i.get("stats") else "")
             + (f'<p class="why"><b>Why it matters to you:</b> {e(i["why"])}</p>' if i.get("why") else "")
             + ('<div class="debate"><p><b>The debate:</b> {}</p><p><b>One side:</b> {}</p>'
                '<p><b>The other side:</b> {}</p></div>'.format(*map(e, i["debate"])) if i.get("debate") else "")
