@@ -494,10 +494,12 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - event: the single event or announcement the story reports, at most 6 words, e.g. "Nvidia reinstates
      Jensen Huang". Stories about the same event from any angle (reaction, markets, analysis, another
      outlet) use exactly the same text; a new development in the same storyline is a different event.
-   - stats: up to 3 key figures the given text states (headline or description): value, the number with
-     its unit as written (e.g. "31%", "$41 billion", "48"), and label, what it counts in at most 8 words
-     (e.g. "rise in mortgage delinquencies in Q3", "people wounded"). Only numbers in the text, never
-     computed or recalled ones; [] when the text has none.
+   - stats: up to 3 statistics the given text states that a reader could quote: money, percentages, rates,
+     totals, changes, records or comparisons. value is the number with its unit as written (e.g. "31%",
+     "$41 billion", "13-year high"); label says what it measures in at most 8 words (e.g. "rise in mortgage
+     delinquencies in Q3"). Not dates or years, not list sizes, not a small count that only repeats the
+     headline ("two counts", "five jets"). Only numbers in the text, never computed or recalled ones.
+     [] when there are none; most stories have none.
    - same_as: the lowest id of another story that reports the same event or the same new figures (another
      outlet, a reaction, analysis or a column on it), else -1. E.g. three headlines on one mortgage
      arrears report, or on one tariff announcement, all point to the first of them.
