@@ -450,7 +450,7 @@ def also(tile, other):
 
 BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own description.
 1. For every id write:
-   - summary: 2-3 plain, neutral sentences (at most 60 words): what happened, then the context a
+   - summary: 3-4 plain, neutral sentences (50-80 words): what happened, then the context a
      reader needs to understand it: what led to it, who the key players are, or what it changes.
      Never mention the headline, the text or what it leaves out; if it says little, give background.
      For an opinion column, say whose view it is and the argument in brief.
@@ -566,7 +566,7 @@ def ask_openai(items, moves=(), known=(), disliked=(), trends=()):
     body = {
         "model": MODEL,
         "reasoning": {"effort": "none"},
-        "max_output_tokens": 40000,  # a brief of ~200 stories is ~25k; caps a reply that runs on after its JSON
+        "max_output_tokens": 48000,  # a brief of ~200 stories is ~32k; caps a reply that runs on after its JSON
         "instructions": BRIEF_PROMPT,
         "input": lines,
         "text": {"format": {"type": "json_schema", "name": "brief", "strict": True, "schema": BRIEF_SCHEMA}},

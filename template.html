@@ -59,6 +59,9 @@
   [hidden] { display: none !important; }
   h2 { margin: 0 0 .25rem; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   ol { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .75rem; }
+  /* masonry (set by the script): tiles keep their own height and the next one fills the gap below a short one */
+  ol.masonry { grid-auto-rows: 4px; row-gap: 0; }
+  ol.masonry > li { align-self: start; }
   li { position: relative; padding: 1rem 1.1rem; background: var(--tile); border: 1px solid var(--rule); border-radius: 10px; }
   .tag { margin: 0 0 .3rem; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   h3 { margin: 0; font-size: 1.1rem; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
@@ -105,6 +108,19 @@
 </main>
 <footer>Headlines from the outlets' own RSS feeds; each link goes to the original story. <b>World</b> is how important a story is to the world: how many people and countries it reaches, how much it sets off other events (markets, trade, wars, elections, other governments), and whether it will matter in a year (big stories show <b>How it spreads</b> to markets and prices, and <b>Why they did it</b>), blended with how many outlets and how many regions (Canada, the US, the UK, India, the Middle East) cover it. <b>You</b> is how directly it affects you, a young Canadian student. Stories are sorted by both, with newer ones ahead. Every story counts as relevant unless you tap <b>Not for me</b>: those votes push similar topics and stories down from the next update. <b>Most Covered</b> lists the stories the most separate outlets are running. <b>Ongoing</b> follows storylines in today's news with a headline a month from the past year. On contested questions, <b>The debate</b> gives the strongest case each side makes, so you can make up your own mind. Summaries are written by AI from each outlet's description; <b>AI background</b> marks stories where the outlet gave only a headline, so the context is the AI's general knowledge, not reporting. <b>Trending</b> is what Canadians are searching for on Google right now, and <b>This Week</b> is the week's biggest stories if you missed a few days. <a href="/archive/">Past briefs</a></footer>
 <script>
+  // Masonry: each tile spans as many 4px rows as it is tall (+ the 12px gap). Re-measured whenever a tile
+  // changes size, including when its tab is first shown. Without the script the plain grid stays.
+  (() => {
+    if (!('ResizeObserver' in window)) return;
+    const sizer = new ResizeObserver(entries => entries.forEach(({ target }) => {
+      const height = target.getBoundingClientRect().height;
+      if (height) target.style.gridRowEnd = `span ${Math.ceil((height + 12) / 4)}`;
+    }));
+    document.querySelectorAll('main ol').forEach(list => {
+      list.classList.add('masonry');
+      list.querySelectorAll(':scope > li').forEach(tile => sizer.observe(tile));
+    });
+  })();
   // Enhance ordinary fragment links only after all sections are available.
   (() => {
     const tablist = document.querySelector('.topics');

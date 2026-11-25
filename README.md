@@ -11,7 +11,7 @@ Wired, TechCrunch, IEEE Spectrum, Hacker News), refreshed twice a day, at 7am an
 - Change sources: edit `FEEDS` in `news.py`.
 - Try it locally: `python news.py` prints the digest and writes `data/site/index.html`.
 - AI brief (optional): with `OPENAI_API_KEY` in the server's `~/projects/news/.env`, one `gpt-6-luna` call per refresh
-  (reasoning off, ~30k tokens, about a cent) writes each summary in 2-3 sentences with context, the why-it-matters
+  (reasoning off, ~40k tokens, a few cents) writes each summary in 3-4 sentences with context, the why-it-matters
   line and the ratings below. Other outlets running the same event are linked on its tile ("Also at"); when the
   tile's outlet is paywalled and a free one ran it too, the free one gets the main link. Stories whose feed gave
   only a headline (Google News results) are marked **AI background**: their context is the AI's general
