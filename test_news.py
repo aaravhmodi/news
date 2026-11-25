@@ -246,6 +246,21 @@ class T(unittest.TestCase):
         self.assertIn(tile, ranked["Business"])
         self.assertIn("Ontario rent freeze extended", [i["title"] for i in ranked["Canada"]])  # unrated: stays home
 
+    def test_same_as_merges_drifting_event_names(self):
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        mk = lambda t: {"title": t, "summary": "x", "source": t, "when": now, "link": f"https://x/{t}",
+                        "outlets": 1, "regions": 1}
+        sections = {"World": [mk("US announces new tariffs"), mk("US plans to hike tariffs"), mk("Gaza strike")]}
+        rate = lambda n, event, same_as: {"id": n, "summary": "s", "why": "", "reach": 5, "ripple": 5, "lasting": 5,
+                                          "knock_on": "", "motive": "", "you": 5 - n, "debate": "", "side_a": "",
+                                          "side_b": "", "thread": "", "event": event, "same_as": same_as,
+                                          "topics": ["World"], "buzz": 2}
+        news.apply_brief(sections, {"stories": [rate(0, "US announces tariffs", -1), rate(1, "US plans tariffs", 0),
+                                                rate(2, "Gaza strike", 2)]})  # pointing at itself is ignored
+        out = news.rank(sections, now)
+        self.assertEqual([i["title"] for i in out["World"]], ["US announces new tariffs", "Gaza strike"])
+        self.assertEqual([a["source"] for a in out["World"][0]["also"]], ["US plans to hike tariffs"])
+
     def test_paywalled_tile_links_free_outlet(self):
         tile = {"source": "The Globe and Mail", "link": "https://g/a",
                 "also": [{"source": "Financial Post", "link": "https://fp/a"}, {"source": "CBC", "link": "https://c/a"}]}

@@ -75,7 +75,7 @@ the AI so it rates similar stories lower.
 
 World = 0.6 AI world + 0.2 coverage + 0.2 spread. Rank = (World + You) / 2 x freshness. For You is the top 8
 (at most 3 per topic; sport and culture only at buzz 7+); each topic is sorted the same way, with one tile per
-event (the AI names the event; a new development in the same storyline gets its own tile). The AI also picks the 1-3
+event (the AI names the event and points every repeat at the first story on it; a new development in the same storyline gets its own tile). The AI also picks the 1-3
 topics each story belongs in (by what it is about, not which feed carried it), and the story shows in each of
 those tabs. Without an
 OpenAI key, World is half coverage, half spread, and You is the watchlist.

@@ -493,6 +493,9 @@ BRIEF_PROMPT = f"""Each input line is: id|section|headline|the outlet's own desc
    - event: the single event or announcement the story reports, at most 6 words, e.g. "Nvidia reinstates
      Jensen Huang". Stories about the same event from any angle (reaction, markets, analysis, another
      outlet) use exactly the same text; a new development in the same storyline is a different event.
+   - same_as: the lowest id of another story that reports the same event or the same new figures (another
+     outlet, a reaction, analysis or a column on it), else -1. E.g. three headlines on one mortgage
+     arrears report, or on one tariff announcement, all point to the first of them.
    - topics: the 1-3 sections this story belongs in, best fit first, from: {", ".join(FEEDS)}.
      Judge by what the story is about, not the section it came in (a war is not Tech; a tariff is
      Business and maybe World or Canada). Top Stories only for the day's most important news.
@@ -528,13 +531,13 @@ BRIEF_SCHEMA = {
         }},
         "stories": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "summary", "why", "reach", "ripple", "lasting", "knock_on", "motive",
-                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "topics", "buzz"],
+                                                                  "you", "debate", "side_a", "side_b", "thread", "event", "same_as", "topics", "buzz"],
             "properties": {"id": {"type": "integer"}, "summary": {"type": "string"}, "why": {"type": "string"},
                            "reach": {"type": "integer"}, "ripple": {"type": "integer"},
                            "lasting": {"type": "integer"}, "knock_on": {"type": "string"}, "motive": {"type": "string"},
                            "you": {"type": "integer"},
                            "debate": {"type": "string"}, "side_a": {"type": "string"}, "side_b": {"type": "string"},
-                           "thread": {"type": "string"}, "event": {"type": "string"},
+                           "thread": {"type": "string"}, "event": {"type": "string"}, "same_as": {"type": "integer"},
                            "topics": {"type": "array", "items": {"type": "string", "enum": list(FEEDS)}},
                            "buzz": {"type": "integer"}},
         }},
@@ -598,6 +601,17 @@ def apply_brief(sections, brief):
                 i["section"] = i["topics"][0]
             if all(s.get(k, "").strip() for k in ("debate", "side_a", "side_b")):
                 i["debate"] = tuple(s[k].strip() for k in ("debate", "side_a", "side_b"))
+    # event names written story by story drift ("US announces tariffs" / "US plans tariffs"), so every story
+    # the AI points at another takes that story's event, and rank() merges them into one tile
+    parent = {s["id"]: s.get("same_as", -1) for s in brief["stories"]}
+    for n in parent:
+        root = n
+        for _ in range(5):  # follow a short chain; a loop stops here
+            if not (0 <= parent.get(root, -1) < len(items)) or parent[root] == root:
+                break
+            root = parent[root]
+        if root != n and 0 <= n < len(items):
+            items[n]["event"] = items[root].get("event") or items[root]["link"]
 
 
 def prefs(feedback, now):
