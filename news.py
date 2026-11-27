@@ -273,12 +273,29 @@ def key_numbers():
 TRENDS_NS = "{https://trends.google.com/trending/rss}"
 
 
+ENGLISH = set("the a an to of in on for and is are was with at by from as it this that how what why who you your "
+               "after over new not be has have will can just".split())
+FOREIGN = set("de la le les des du et une est pas au aux sur pour dans el los las que para con por del una y "
+              "und der die das ist nicht mit".split())
+
+
+def english(text):
+    """True for English text: Latin script only, and no more French/Spanish/German function words than English ones."""
+    if re.search(r"[^\W\d_a-zA-ZÀ-ɏ]", text):  # a letter outside Latin script: Chinese, Cyrillic, Arabic...
+        return False
+    words = re.findall(r"[a-zà-ÿ]+", text.lower())
+    return sum(w in FOREIGN for w in words) <= sum(w in ENGLISH for w in words)
+
+
 def trending():
-    """What Canadians are searching for now: [{term, traffic, title, link, source}], from Google Trends."""
+    """What Canadians are searching for now: [{term, traffic, title, link, source}], from Google Trends.
+    English only: each trend shows its first English story, and a trend with none is left out."""
     out = []
     for el in ET.fromstring(fetch("https://trends.google.com/trending/rss?geo=CA")).iter("item"):
-        news_item = el.find(TRENDS_NS + "news_item")
         get = lambda e, tag: html.unescape((e.findtext(TRENDS_NS + tag) or "").strip()) if e is not None else ""
+        news_item = next((n for n in el.iter(TRENDS_NS + "news_item") if english(get(n, "news_item_title"))), None)
+        if news_item is None or not english(el.findtext("title") or ""):
+            continue
         link = get(news_item, "news_item_url")
         out.append({"term": (el.findtext("title") or "").strip(), "traffic": get(el, "approx_traffic"),
                     "title": get(news_item, "news_item_title"), "source": get(news_item, "news_item_source"),

@@ -291,6 +291,22 @@ class T(unittest.TestCase):
         self.assertIn('<p class="warn" role="status">AI summaries are unavailable</p>', page)
         self.assertNotIn("%WARN%", render({"World": []}, now))
 
+    def test_trending_english_only(self):
+        item = lambda term, *titles: f'<item><title>{term}</title>' + "".join(
+            f'<ht:news_item><ht:news_item_title>{t}</ht:news_item_title><ht:news_item_url>https://x/{n}</ht:news_item_url>'
+            f'</ht:news_item>' for n, t in enumerate(titles)) + '</item>'
+        xml = ('<rss xmlns:ht="https://trends.google.com/trending/rss"><channel>'
+               + item("taux", "Une hausse des taux n’est pas une solution durable à l’abordabilité du logement")
+               + item("avianca", "Piden ayuda para que un veterano del Ejército pueda viajar con su perro",
+                      "Avianca flight cancelled after storm")
+               + item("春晚", "Spring gala draws record audience")
+               + item("matt damon", "America’s Race Team Returns")
+               + '</channel></rss>').encode()
+        with mock.patch.object(news, "fetch", return_value=xml):
+            got = news.trending()
+        self.assertEqual([(t["term"], t["title"]) for t in got],
+                         [("avianca", "Avianca flight cancelled after storm"), ("matt damon", "America’s Race Team Returns")])
+
     def test_this_week_one_per_event(self):
         now = datetime(2026, 11, 24, tzinfo=timezone.utc)
         mk = lambda t, ev, w: {"title": t, "summary": "", "link": "https://x/" + t, "source": "CBC", "section": "World",
